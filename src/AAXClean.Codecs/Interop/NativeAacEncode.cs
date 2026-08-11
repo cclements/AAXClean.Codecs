@@ -26,6 +26,9 @@ internal unsafe class NativeAacEncode : IDisposable
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
 	private static extern int AacEncoder_GetExtraData(EncoderHandle self, byte* ascBuffer, int* pSize);
 
+	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
+	private static extern int AacEncoder_GetInitialPadding(EncoderHandle self);
+
 	public NativeAacEncode(WaveFormat waveFormat, long bitRate, double quality)
 	{
 		AacEncoderOptions options = new()
@@ -52,6 +55,26 @@ internal unsafe class NativeAacEncode : IDisposable
 		=> AacEncoder_ReceiveEncodedFrame(Handle, pEncodedAudio, size);
 	public int EncodeFlush()
 		=> AacEncoder_EncodeFlush(Handle);
+
+	/// <summary>
+	/// Returns the encoder delay reported by AVCodecContext when the loaded native binary
+	/// exposes it. Released binaries predating this ABI remain supported; callers can derive
+	/// the delay from encoded media length in that case.
+	/// </summary>
+	public int? TryGetInitialPadding()
+	{
+		try
+		{
+			int padding = AacEncoder_GetInitialPadding(Handle);
+			return padding >= 0
+				? padding
+				: throw new Exception($"Failed to retrieve AAC encoder initial padding. Code {padding}");
+		}
+		catch (EntryPointNotFoundException)
+		{
+			return null;
+		}
+	}
 
 	public byte[] GetAudioSpecificConfig()
 	{

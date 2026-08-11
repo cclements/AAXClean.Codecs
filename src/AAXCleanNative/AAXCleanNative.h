@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include <libavutil/frame.h>
+#include <libavutil/samplefmt.h>
 #include <libavcodec/avcodec.h>
 #include <libswresample/swresample.h>
 
@@ -108,6 +109,15 @@ EXPORT PVOID AacEncoder_Open(PAacEncoderOptions encoder_options);
 */
 
 EXPORT int32_t AacEncoder_GetExtraData(PAacEncoder config, uint8_t* ascBuffer, int32_t* pSize);
+
+/**
+* Get the encoder delay reported by the underlying AVCodecContext.
+*
+* @param config encoder handle
+*
+* @return the non-negative initial padding in audio samples, otherwise a negative error code.
+*/
+EXPORT int32_t AacEncoder_GetInitialPadding(PAacEncoder config);
 
 
 

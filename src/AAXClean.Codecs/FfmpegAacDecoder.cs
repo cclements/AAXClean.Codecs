@@ -3,6 +3,7 @@ using AAXClean.Codecs.Interop;
 using AAXClean.FrameFilters;
 using Mpeg4Lib.Boxes;
 using System;
+using System.Collections.Generic;
 
 namespace AAXClean.Codecs;
 
@@ -12,13 +13,18 @@ internal unsafe sealed class FfmpegAacDecoder : IDisposable
 	public WaveFormat WaveFormat { get; }
 
 	private readonly NativeDecode AudioDecoder;
+	private readonly uint InputTimescale;
+	private readonly Queue<FrameEntry> PendingFrames = new();
+	private long? NextOutputStartSample;
 
 	private int NumberOfSamplesSkipped = 0;
 	private int MaxSamplesToSkip { get; }
 	private static TimeSpan MaxTimeToSkip { get; } = TimeSpan.FromSeconds(1);
 
-	public FfmpegAacDecoder(AudioSampleEntry audioSampleEntry, WaveFormatEncoding waveFormatEncoding)
+	public FfmpegAacDecoder(AudioSampleEntry audioSampleEntry, uint inputTimescale, WaveFormatEncoding waveFormatEncoding)
 	{
+		ArgumentOutOfRangeException.ThrowIfZero(inputTimescale);
+		InputTimescale = inputTimescale;
 		if (audioSampleEntry.Esds is EsdsBox esds)
 		{
 			var asc = esds.ES_Descriptor.DecoderConfig.AudioSpecificConfig;
@@ -40,8 +46,10 @@ internal unsafe sealed class FfmpegAacDecoder : IDisposable
 			throw new Exception($"AudioSampleEntry does not contain {nameof(EsdsBox)} or {nameof(Dec3Box)}");
 	}
 
-	public FfmpegAacDecoder(AudioSampleEntry audioSampleEntry, WaveFormatEncoding waveFormatEncoding, SampleRate sampleRate, bool stereo)
+	public FfmpegAacDecoder(AudioSampleEntry audioSampleEntry, uint inputTimescale, WaveFormatEncoding waveFormatEncoding, SampleRate sampleRate, bool stereo)
 	{
+		ArgumentOutOfRangeException.ThrowIfZero(inputTimescale);
+		InputTimescale = inputTimescale;
 		WaveFormat = new WaveFormat(sampleRate, waveFormatEncoding, stereo);
 		if (audioSampleEntry.Esds is EsdsBox esds)
 		{
@@ -76,24 +84,15 @@ internal unsafe sealed class FfmpegAacDecoder : IDisposable
 
 			//Failed to decode the frame. May need to skip to seed the decoder
 			//for some number of frames before trying to receive decoded data.
-			return new WaveEntry
-			{
-				Chunk = input.Chunk,
-				SamplesInFrame = 0,
-				FrameData = Memory<byte>.Empty,
-			};
+			return EmptyEntry(input);
 		}
+		PendingFrames.Enqueue(input);
 
 		int requiredSamples = GetMaxAvailableDecodeSize();
 		if (requiredSamples == 0)
-		{
-			return new WaveEntry
-			{
-				Chunk = input.Chunk,
-				SamplesInFrame = 0,
-				FrameData = Memory<byte>.Empty,
-			};
-		}
+			return EmptyEntry(input);
+
+		var source = PendingFrames.Dequeue();
 
 		Memory<byte> decoded = new byte[requiredSamples * WaveFormat.BlockAlign];
 
@@ -107,10 +106,13 @@ internal unsafe sealed class FfmpegAacDecoder : IDisposable
 
 			return new WaveEntry
 			{
-				Chunk = input.Chunk,
+				Chunk = source.Chunk,
 				SamplesInFrame = (uint)receivedSamples,
 				FrameData = decoded.Slice(0, receivedSamples * WaveFormat.BlockAlign / 2),
 				FrameData2 = decoded.Slice(requiredSamples * WaveFormat.BlockAlign / 2, receivedSamples * WaveFormat.BlockAlign / 2),
+				ExtraData = source.ExtraData,
+				IsSyncSample = source.IsSyncSample,
+				StartSample = TakeOutputStart(source.StartSample, receivedSamples),
 			};
 		}
 		else
@@ -123,9 +125,12 @@ internal unsafe sealed class FfmpegAacDecoder : IDisposable
 
 			return new WaveEntry
 			{
-				Chunk = input.Chunk,
+				Chunk = source.Chunk,
 				SamplesInFrame = (uint)receivedSamples,
-				FrameData = decoded.Slice(0, receivedSamples * WaveFormat.BlockAlign)
+				FrameData = decoded.Slice(0, receivedSamples * WaveFormat.BlockAlign),
+				ExtraData = source.ExtraData,
+				IsSyncSample = source.IsSyncSample,
+				StartSample = TakeOutputStart(source.StartSample, receivedSamples),
 			};
 		}
 	}
@@ -136,6 +141,7 @@ internal unsafe sealed class FfmpegAacDecoder : IDisposable
 
 		Memory<byte> decoded = new byte[requiredSamples * WaveFormat.BlockAlign];
 
+		var source = PendingFrames.Count > 0 ? PendingFrames.Dequeue() : null;
 		if (WaveFormat.Encoding is NAudio.Wave.WaveFormatEncoding.Dts && WaveFormat.Channels == 2)
 		{
 			int receivedSamples;
@@ -146,9 +152,13 @@ internal unsafe sealed class FfmpegAacDecoder : IDisposable
 
 			return new WaveEntry
 			{
+				Chunk = source?.Chunk,
 				SamplesInFrame = (uint)receivedSamples,
 				FrameData = decoded.Slice(0, receivedSamples * WaveFormat.BlockAlign / 2),
 				FrameData2 = decoded.Slice(requiredSamples * WaveFormat.BlockAlign / 2, receivedSamples * WaveFormat.BlockAlign / 2),
+				ExtraData = source?.ExtraData,
+				IsSyncSample = source?.IsSyncSample,
+				StartSample = TakeOutputStart(source?.StartSample, receivedSamples),
 			};
 		}
 		else
@@ -161,10 +171,44 @@ internal unsafe sealed class FfmpegAacDecoder : IDisposable
 
 			return new WaveEntry
 			{
+				Chunk = source?.Chunk,
 				SamplesInFrame = (uint)receivedSamples,
 				FrameData = decoded.Slice(0, receivedSamples * WaveFormat.BlockAlign),
+				ExtraData = source?.ExtraData,
+				IsSyncSample = source?.IsSyncSample,
+				StartSample = TakeOutputStart(source?.StartSample, receivedSamples),
 			};
 		}
+	}
+
+	private WaveEntry EmptyEntry(FrameEntry source)
+		=> new()
+		{
+			Chunk = source.Chunk,
+			SamplesInFrame = 0,
+			FrameData = Memory<byte>.Empty,
+			ExtraData = source.ExtraData,
+			IsSyncSample = source.IsSyncSample,
+			StartSample = source.StartSample is long start ? ScaleSamplePosition(start, InputTimescale, (uint)WaveFormat.SampleRate) : null,
+		};
+
+	private long? TakeOutputStart(long? sourceStart, int receivedSamples)
+	{
+		NextOutputStartSample ??= sourceStart is long start
+			? ScaleSamplePosition(start, InputTimescale, (uint)WaveFormat.SampleRate)
+			: null;
+		var outputStart = NextOutputStartSample;
+		if (outputStart is long positioned)
+			NextOutputStartSample = checked(positioned + receivedSamples);
+		return outputStart;
+	}
+
+	internal static long ScaleSamplePosition(long sample, uint inputTimescale, uint outputSampleRate)
+	{
+		ArgumentOutOfRangeException.ThrowIfNegative(sample);
+		ArgumentOutOfRangeException.ThrowIfZero(inputTimescale);
+		ArgumentOutOfRangeException.ThrowIfZero(outputSampleRate);
+		return checked((long)ElstBox.ScaleDuration((ulong)sample, inputTimescale, outputSampleRate));
 	}
 
 	private bool SendSamples(ReadOnlyMemory<byte> frameData)

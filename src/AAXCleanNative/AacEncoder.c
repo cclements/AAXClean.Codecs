@@ -5,7 +5,22 @@ int32_t AacEncoder_EncodeFlush(PAacEncoder config) {
     int32_t ret;
 
     if (config->current_frame_nb_samples) {
-        //Send last partial frame
+		// Encoders consume a full frame. Never expose stale bytes from the reusable AVFrame
+		// as tail audio when a caller flushes a partial frame.
+		const int32_t num_planes = av_sample_fmt_is_planar(config->context->sample_fmt)
+			? config->context->ch_layout.nb_channels
+			: 1;
+		const int32_t bytes_per_sample = config->sample_size
+			* config->context->ch_layout.nb_channels / num_planes;
+		const int32_t samples_to_clear = AAC_FRAME_SIZE - config->current_frame_nb_samples;
+		for (int32_t i = 0; i < num_planes; i++) {
+			memset(
+				config->frame->data[i] + config->current_frame_nb_samples * bytes_per_sample,
+				0,
+				samples_to_clear * bytes_per_sample);
+		}
+
+		//Send last zero-padded partial frame
         ret = avcodec_send_frame(config->context, config->frame);
 
         if (ret < 0)
@@ -135,6 +150,13 @@ failed:
     if(pSize)
         *pSize = 0;
     return ret;
+}
+
+EXPORT int32_t AacEncoder_GetInitialPadding(PAacEncoder config) {
+	if (!config || !config->context)
+		return ERR_INVALID_HANDLE;
+
+	return config->context->initial_padding;
 }
 
 PVOID AacEncoder_Open(PAacEncoderOptions encoder_options) {
