@@ -17,17 +17,21 @@ namespace AAXClean.Codecs
 			ArgumentNullException.ThrowIfNull(mp4File, nameof(mp4File));
 			if (decibels >= 0 || decibels < -90) throw new ArgumentOutOfRangeException(nameof(decibels), "must fall in [-90,0)");
 			if (minDuration.TotalSeconds * (int)mp4File.SampleRate < 2) throw new ArgumentOutOfRangeException(nameof(minDuration), "must be no shorter than 2 audio samples.");
+			SourcePresentation sourcePresentation = ValidateSourcePresentation(mp4File);
 
 			FrameTransformBase<FrameEntry, FrameEntry> filter1 = mp4File.GetAudioFrameFilter();
-			AacToWave filter2 = new(mp4File.AudioSampleEntry, WaveFormatEncoding.Pcm);
+			AacToWave filter2 = new(mp4File.AudioSampleEntry, mp4File.Moov.AudioTrack.Mdia.Mdhd.Timescale, WaveFormatEncoding.Pcm);
 			SilenceDetectFilter f3 = new(
 				decibels,
 				minDuration,
 				filter2.WaveFormat,
 				detectionCallback);
 
+			var presentationMap = CreatePresentationSampleMap(sourcePresentation, filter2.WaveFormat);
+			var presentationFilter = presentationMap.CreateWindowFilter(filter2.WaveFormat, TimeSpan.Zero, TimeSpan.MaxValue);
 			filter1.LinkTo(filter2);
-			filter2.LinkTo(f3);
+			filter2.LinkTo(presentationFilter);
+			presentationFilter.LinkTo(f3);
 
 			List<SilenceEntry>? completion(Task t)
 			{
@@ -43,6 +47,7 @@ namespace AAXClean.Codecs
 			ArgumentNullException.ThrowIfNull(mp4File, nameof(mp4File));
 			ArgumentNullException.ThrowIfNull(outputStream, nameof(outputStream));
 			if (outputStream.CanWrite is false) throw new ArgumentException("output stream is not writable", nameof(outputStream));
+			SourcePresentation sourcePresentation = ValidateSourcePresentation(mp4File);
 
 			lameConfig ??= mp4File.GetDefaultLameConfig();
 			lameConfig.ID3 ??= mp4File.MetadataItems?.ToIDTags() ?? new(nameof(AAXClean));
@@ -55,14 +60,19 @@ namespace AAXClean.Codecs
 
 			var stereo = lameConfig.Mode is not NAudio.Lame.MPEGMode.Mono;
 			var sampleRate = mp4File.GetMaxSampleRate((SampleRate?)lameConfig.OutputSampleRate);
+			var start = userChapters?.StartOffset ?? TimeSpan.Zero;
+			var end = userChapters?.EndOffset ?? TimeSpan.MaxValue;
 
 			FrameTransformBase<FrameEntry, FrameEntry> filter1 = mp4File.GetAudioFrameFilter();
 
 			AacToWave filter2 = new(
 				mp4File.AudioSampleEntry,
+				mp4File.Moov.AudioTrack.Mdia.Mdhd.Timescale,
 				WaveFormatEncoding.Pcm,
 				sampleRate,
 				stereo);
+			var presentationMap = CreatePresentationSampleMap(sourcePresentation, filter2.WaveFormat);
+			var presentationFilter = presentationMap.CreateWindowFilter(filter2.WaveFormat, start, end);
 
 			WaveToMp3Filter filter3 = new(
 				outputStream,
@@ -70,10 +80,8 @@ namespace AAXClean.Codecs
 				lameConfig);
 
 			filter1.LinkTo(filter2);
-			filter2.LinkTo(filter3);
-
-			var start = userChapters?.StartOffset ?? TimeSpan.Zero;
-			var end = userChapters?.EndOffset ?? TimeSpan.MaxValue;
+			filter2.LinkTo(presentationFilter);
+			presentationFilter.LinkTo(filter3);
 
 			void completion(Task t)
 			{
@@ -90,6 +98,7 @@ namespace AAXClean.Codecs
 			ArgumentNullException.ThrowIfNull(outputStream, nameof(outputStream));
 			ArgumentNullException.ThrowIfNull(options, nameof(options));
 			if (outputStream.CanWrite is false) throw new ArgumentException("output stream is not writable", nameof(outputStream));
+			SourcePresentation sourcePresentation = ValidateSourcePresentation(mp4File);
 
 			var start = userChapters?.StartOffset ?? TimeSpan.Zero;
 			var end = userChapters?.EndOffset ?? TimeSpan.MaxValue;
@@ -109,9 +118,12 @@ namespace AAXClean.Codecs
 
 			AacToWave filter2 = new(
 				mp4File.AudioSampleEntry,
+				mp4File.Moov.AudioTrack.Mdia.Mdhd.Timescale,
 				WaveFormatEncoding.Pcm,
 				sampleRate,
 				stereo);
+			var presentationMap = CreatePresentationSampleMap(sourcePresentation, filter2.WaveFormat);
+			var presentationFilter = presentationMap.CreateWindowFilter(filter2.WaveFormat, start, end);
 
 			WaveToAacFilter filter3 = new(
 				outputStream,
@@ -122,7 +134,8 @@ namespace AAXClean.Codecs
 				options.EncoderQuality);
 
 			filter1.LinkTo(filter2);
-			filter2.LinkTo(filter3);
+			filter2.LinkTo(presentationFilter);
+			presentationFilter.LinkTo(filter3);
 
 			if (mp4File.Moov.TextTrack is null || userChapters is not null)
 			{
@@ -156,6 +169,7 @@ namespace AAXClean.Codecs
 			ArgumentNullException.ThrowIfNull(mp4File, nameof(mp4File));
 			ArgumentNullException.ThrowIfNull(userChapters, nameof(userChapters));
 			ArgumentNullException.ThrowIfNull(newFileCallback, nameof(newFileCallback));
+			SourcePresentation sourcePresentation = ValidateSourcePresentation(mp4File);
 
 			var stereo = mp4File.AudioChannels > 1 && options.Stereo is true;
 			var sampleRate = mp4File.GetMaxSampleRate(options.SampleRate);
@@ -164,18 +178,24 @@ namespace AAXClean.Codecs
 
 			AacToWave filter2 = new(
 				mp4File.AudioSampleEntry,
+				mp4File.Moov.AudioTrack.Mdia.Mdhd.Timescale,
 				WaveFormatEncoding.Pcm,
 				sampleRate,
 				stereo);
+			var presentationMap = CreatePresentationSampleMap(sourcePresentation, filter2.WaveFormat);
+			var presentationFilter = presentationMap.CreateWindowFilter(
+				filter2.WaveFormat, userChapters.StartOffset, userChapters.EndOffset);
 
 			WaveToAacMultipartFilter filter3 = new(
 				userChapters, mp4File.Ftyp, mp4File.Moov,
 				filter2.WaveFormat,
 				options,
-				newFileCallback);
+				newFileCallback,
+				presentationMap.MapPresentationTime);
 
 			filter1.LinkTo(filter2);
-			filter2.LinkTo(filter3);
+			filter2.LinkTo(presentationFilter);
+			presentationFilter.LinkTo(filter3);
 
 			void completion(Task t) => filter1.Dispose();
 
@@ -187,6 +207,7 @@ namespace AAXClean.Codecs
 			ArgumentNullException.ThrowIfNull(mp4File, nameof(mp4File));
 			ArgumentNullException.ThrowIfNull(userChapters, nameof(userChapters));
 			ArgumentNullException.ThrowIfNull(newFileCallback, nameof(newFileCallback));
+			SourcePresentation sourcePresentation = ValidateSourcePresentation(mp4File);
 
 			lameConfig ??= mp4File.GetDefaultLameConfig();
 			lameConfig.ID3 ??= mp4File.MetadataItems?.ToIDTags() ?? new(nameof(AAXClean));
@@ -198,18 +219,24 @@ namespace AAXClean.Codecs
 
 			AacToWave filter2 = new(
 				mp4File.AudioSampleEntry,
+				mp4File.Moov.AudioTrack.Mdia.Mdhd.Timescale,
 				WaveFormatEncoding.Pcm,
 				sampleRate,
 				stereo);
+			var presentationMap = CreatePresentationSampleMap(sourcePresentation, filter2.WaveFormat);
+			var presentationFilter = presentationMap.CreateWindowFilter(
+				filter2.WaveFormat, userChapters.StartOffset, userChapters.EndOffset);
 
 			WaveToMp3MultipartFilter filter3 = new(
 				userChapters,
 				filter2.WaveFormat,
 				lameConfig,
-				newFileCallback);
+				newFileCallback,
+				presentationMap.MapPresentationTime);
 
 			filter1.LinkTo(filter2);
-			filter2.LinkTo(filter3);
+			filter2.LinkTo(presentationFilter);
+			presentationFilter.LinkTo(filter3);
 
 			void completion(Task t) => filter1.Dispose();
 
@@ -243,6 +270,32 @@ namespace AAXClean.Codecs
 
 			return (SampleRate)Math.Min((int)mp4File.SampleRate, (int)(sampleRate ?? SampleRate.Hz_96000));
 		}
+
+		private static SourcePresentation ValidateSourcePresentation(Mp4File mp4File)
+		{
+			uint inputTimescale = mp4File.Moov.AudioTrack.Mdia.Mdhd.Timescale;
+			long presentationStart = mp4File.PresentationStartSample;
+			long presentedDuration = mp4File.PresentedDurationSamples;
+			ArgumentOutOfRangeException.ThrowIfZero(inputTimescale);
+			ArgumentOutOfRangeException.ThrowIfNegative(presentationStart);
+			ArgumentOutOfRangeException.ThrowIfNegative(presentedDuration);
+			_ = checked(presentationStart + presentedDuration);
+			return new SourcePresentation(inputTimescale, presentationStart, presentedDuration);
+		}
+
+		private static PresentationSampleMap CreatePresentationSampleMap(
+			SourcePresentation sourcePresentation,
+			WaveFormat outputFormat)
+			=> new(
+				sourcePresentation.InputTimescale,
+				(uint)outputFormat.SampleRate,
+				sourcePresentation.PresentationStart,
+				sourcePresentation.PresentedDuration);
+
+		private readonly record struct SourcePresentation(
+			uint InputTimescale,
+			long PresentationStart,
+			long PresentedDuration);
 
 		public static NAudio.Lame.ID3TagData ToIDTags(this MetadataItems appleTags)
 		{
@@ -286,4 +339,3 @@ namespace AAXClean.Codecs
 		}
 	}
 }
-

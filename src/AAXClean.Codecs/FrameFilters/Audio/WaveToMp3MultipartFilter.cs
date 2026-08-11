@@ -5,7 +5,7 @@ using System.IO;
 
 namespace AAXClean.Codecs.FrameFilters.Audio
 {
-	internal sealed class WaveToMp3MultipartFilter : MultipartFilterBase<WaveEntry, NewMP3SplitCallback>
+	internal sealed class WaveToMp3MultipartFilter : WaveMultipartFilterBase<NewMP3SplitCallback>
 	{
 		protected override int InputBufferSize => 100;
 
@@ -16,8 +16,13 @@ namespace AAXClean.Codecs.FrameFilters.Audio
 		private LameConfig LameConfig;
 		private Stream? OutputStream;
 
-		public WaveToMp3MultipartFilter(Mpeg4Lib.ChapterInfo splitChapters, WaveFormat waveFormat, LameConfig lameConfig, Action<NewMP3SplitCallback> newFileCallback)
-			: base(splitChapters, waveFormat.SampleRateEnum, waveFormat.Channels == 2)
+		public WaveToMp3MultipartFilter(
+			Mpeg4Lib.ChapterInfo splitChapters,
+			WaveFormat waveFormat,
+			LameConfig lameConfig,
+			Action<NewMP3SplitCallback> newFileCallback,
+			Func<TimeSpan, long> presentationTimeToSample)
+			: base(splitChapters, waveFormat, presentationTimeToSample)
 		{
 			WaveFormat = waveFormat;
 			LameConfig = lameConfig;
