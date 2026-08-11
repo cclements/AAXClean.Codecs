@@ -5,7 +5,7 @@ using System;
 
 namespace AAXClean.Codecs.FrameFilters.Audio
 {
-	internal class WaveToAacMultipartFilter : MultipartFilterBase<WaveEntry, NewAacSplitCallback>
+	internal class WaveToAacMultipartFilter : WaveMultipartFilterBase<NewAacSplitCallback>
 	{
 		private Action<NewAacSplitCallback> NewFileCallback { get; }
 		protected override int InputBufferSize => 100;
@@ -21,8 +21,15 @@ namespace AAXClean.Codecs.FrameFilters.Audio
 		private readonly MoovBox moov;
 		private const int FRAMES_PER_CHUNK = 20;
 
-		public WaveToAacMultipartFilter(ChapterInfo splitChapters, FtypBox ftyp, MoovBox moov, WaveFormat waveFormat, AacEncodingOptions encoderOptions, Action<NewAacSplitCallback> newFileCallback)
-			: base(splitChapters, waveFormat.SampleRateEnum, waveFormat.Channels == 2)
+		public WaveToAacMultipartFilter(
+			ChapterInfo splitChapters,
+			FtypBox ftyp,
+			MoovBox moov,
+			WaveFormat waveFormat,
+			AacEncodingOptions encoderOptions,
+			Action<NewAacSplitCallback> newFileCallback,
+			Func<TimeSpan, long> presentationTimeToSample)
+			: base(splitChapters, waveFormat, presentationTimeToSample)
 		{
 			this.ftyp = ftyp;
 			this.moov = moov;
