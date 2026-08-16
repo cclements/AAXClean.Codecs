@@ -46,6 +46,7 @@ namespace AAXClean.Codecs.FrameFilters.Audio
 			{
 				mp4writer?.AddFrame(flushedFrame.FrameData.Span, newChunk: false, flushedFrame.SamplesInFrame);
 			}
+			mp4writer?.SetEditList(aacEncoder.PresentationStartSamples, aacEncoder.AcceptedPcmSamples);
 			mp4writer?.Close();
 			mp4writer?.OutputFile.Close();
 			mp4writer?.Dispose();

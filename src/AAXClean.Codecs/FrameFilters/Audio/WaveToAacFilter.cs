@@ -50,6 +50,8 @@ namespace AAXClean.Codecs.FrameFilters.Audio
 				Mp4aWriter.AddFrame(flushedFrame.FrameData.Span, newChunk: false, flushedFrame.SamplesInFrame);
 			}
 
+			Mp4aWriter.SetEditList(aacEncoder.PresentationStartSamples, aacEncoder.AcceptedPcmSamples);
+
 			//Write any remaining chapters
 			while (ChapterQueue?.TryGetNextChapter(out var chapterEntry) is true)
 				Mp4aWriter.WriteChapter(chapterEntry);
