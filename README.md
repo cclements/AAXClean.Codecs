@@ -23,6 +23,29 @@ Converts and filters aac audio from [AAXClean](https://github.com/Mbucari/AAXCle
 ## Nuget
 Include the [AAXClean.Codecs](https://www.nuget.org/packages/AAXClean.Codecs/) NuGet package to your project.
 
+### Companion AAXClean dependency for the presentation-timing changes
+
+This branch consumes companion AAXClean presentation APIs throughout, not only for
+multipart output. Every conversion entry point validates the source window through
+`Mpeg4File.PresentationStartSample`/`PresentedDurationSamples`, sample mapping and the
+decoder's coordinate rescaling use the exact scaler `ElstBox.ScaleDuration`, and the
+multipart adapter consumes the tagged `MultipartFilterBase` constructor and the multipart
+split seams. AAC timing also uses AAXClean's MP4 edit-list writer
+(`Mp4aWriter.SetEditList`), which is already present in AAXClean 3.1.0 -- but none of the
+presentation surface above is. A Release build against the published 3.1.0 package fails
+with exactly six `CS0115` errors (the three multipart override seams across both target
+frameworks); those declaration-phase errors mask the remaining missing members, which
+surface only once the seams resolve. This branch is therefore not a standalone package
+update and must not be released against AAXClean 3.1.0.
+
+Release AAXClean first under an unused version chosen by the package owner, update both
+the Release `PackageReference` and this repository's nuspec to that exact version, give
+this package its own new version, then build and pack AAXClean.Codecs in Release
+configuration. The repository's Debug build
+uses a sibling AAXClean source checkout for development; a successful Debug build is
+therefore source-integration evidence, not proof that the published package dependency
+is compatible.
+
 ## Usage:
 
 ```C#
@@ -50,6 +73,12 @@ var options = new AacEncodingOptions
 
 await mp4.ConvertToMp4aAsync(File.OpenWrite(@"C:\Decrypted book.mp4"), options);
 ```
+
+AAC encoding consumes packed (interleaved) PCM. Planar PCM is rejected before native
+encoding because the managed path cannot safely infer or combine separate channel
+planes. Input entries larger than one 1,024-sample AAC frame are divided at byte offsets
+derived from the PCM block alignment; this prevents later chunks from overlapping PCM
+that was already encoded.
 
 ### Detect Silence
 ```C#
