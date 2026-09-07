@@ -44,6 +44,10 @@ typedef struct AacDecoder {
     AVPacket* packet;
     AVFrame* frame;
 	OutputOptions output_options;
+    // Additive decoder API v2 state; handles remain opaque at the exported ABI.
+    int32_t drain_state;
+    int32_t frame_pending;
+    int32_t pending_capacity;
 }AacDecoder, * PAacDecoder;
 
 typedef struct AacDecoderOptions {
@@ -239,6 +243,37 @@ audio. Unused for packet audio.
 * @return the number of samples decoded, otherwise a negative error code.
 */
 EXPORT int32_t Decoder_DecodeFlush(PAacDecoder config, uint8_t* outBuff0, uint8_t* outBuff1, uint32_t cbOutBuff);
+
+/** Decoder API v2. Legacy exports remain available; do not mix protocols on a handle. */
+#define DECODER_API_VERSION 2
+#define DECODER_ACCEPTED 0
+#define DECODER_RECEIVE_FIRST 1
+#define DECODER_PCM_CONSUMED 0
+#define DECODER_NEED_INPUT 1
+#define DECODER_PCM_READY 2
+#define DECODER_END_OF_STREAM 3
+
+EXPORT int32_t Decoder_GetApiVersion(void);
+
+/**
+ * Submit one borrowed packet, or NULL/0 to finish input. Returns ACCEPTED only
+ * when the codec accepted it; RECEIVE_FIRST leaves the packet unaccepted and
+ * requires receiving output before retrying the exact same bytes. EOF submission
+ * is idempotent after acceptance. Nonempty input after accepted EOF is rejected.
+ */
+EXPORT int32_t Decoder_SubmitPacket(PAacDecoder config, const uint8_t* data, uint32_t size);
+
+/**
+ * Receive every codec frame, then (after codec EOF) drain the resampler.
+ * Query with NULL/NULL/0: PCM_READY returns a required per-channel capacity in
+ * sample_count and stages one frame/tail; repeat queries do not consume it.
+ * Supply buffers with at least that capacity: PCM_CONSUMED returns the actual
+ * per-channel count (possibly zero). NEED_INPUT requests another packet.
+ * END_OF_STREAM means both codec and resampler ended. Errors are negative.
+ * Too-small/invalid output buffers do not consume the staged frame.
+ */
+EXPORT int32_t Decoder_ReceivePcm(PAacDecoder config, uint8_t* out0, uint8_t* out1,
+    int32_t capacity, int32_t* sample_count);
 
 /**
 * Set the logging callback

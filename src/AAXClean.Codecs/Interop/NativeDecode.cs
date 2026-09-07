@@ -6,6 +6,8 @@ namespace AAXClean.Codecs.Interop;
 
 internal unsafe abstract class NativeDecode : IDisposable
 {
+	internal const int Accepted = 0, ReceiveFirst = 1;
+	internal const int PcmConsumed = 0, NeedInput = 1, PcmReady = 2, EndOfStream = 3;
 	protected abstract DecoderHandle Handle { get; }
 	protected const string libname = "aaxcleannative";
 
@@ -17,6 +19,40 @@ internal unsafe abstract class NativeDecode : IDisposable
 
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
 	private static extern int Decoder_DecodeFlush(DecoderHandle self, byte* pDecodedAudio1, byte* pDecodedAudio2, int cbInBufferSize);
+
+	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
+	private static extern int Decoder_GetApiVersion();
+	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
+	private static extern int Decoder_SubmitPacket(DecoderHandle self, byte* data, int size);
+	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
+	private static extern int Decoder_ReceivePcm(DecoderHandle self, byte* output0, byte* output1, int capacity, out int samples);
+
+	internal static void EnsureDrainApi()
+	{
+		const string message = "PCM conversion requires matched native decoder API v2. Replace the old or mismatched native codec payload before converting audio.";
+		try
+		{
+			if (Decoder_GetApiVersion() != 2)
+				throw new PlatformNotSupportedException(message);
+		}
+		catch (EntryPointNotFoundException error)
+		{
+			throw new PlatformNotSupportedException(message, error);
+		}
+	}
+
+	public virtual int SubmitPacket(ReadOnlyMemory<byte> data)
+	{
+		fixed (byte* input = data.Span)
+			return Decoder_SubmitPacket(Handle, input, data.Length);
+	}
+	public virtual int FinishInput() => Decoder_SubmitPacket(Handle, null, 0);
+	public virtual int ReceivePcm(Span<byte> output0, Span<byte> output1, int capacity, out int samples)
+	{
+		fixed (byte* first = output0)
+		fixed (byte* second = output1)
+			return Decoder_ReceivePcm(Handle, first, second, capacity, out samples);
+	}
 
 	public int DecodeFrame(byte* pCompressedAudio, int cbInputSize)
 		=> Decoder_DecodeFrame(Handle, pCompressedAudio, cbInputSize);

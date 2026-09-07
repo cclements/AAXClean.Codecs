@@ -141,6 +141,9 @@ static int32_t init_decoder_context(PAacDecoder* ppdec, enum AVCodecID id) {
     pdec->swr_ctx = NULL;
     pdec->packet = NULL;
     pdec->frame = NULL;
+    pdec->drain_state = 0;
+    pdec->frame_pending = 0;
+    pdec->pending_capacity = 0;
 
     codec = avcodec_find_decoder(id);
 
@@ -266,6 +269,125 @@ failed:
 PVOID Decoder_OpenAC4(POutputOptions output_options) {
 
     return Decoder_OpenWithStreamDetect(output_options, AV_CODEC_ID_AC4);
+}
+
+int32_t Decoder_GetApiVersion(void) {
+    return DECODER_API_VERSION;
+}
+
+int32_t Decoder_SubmitPacket(PAacDecoder config, const uint8_t* data, uint32_t size) {
+    if (!config || !config->context || !config->packet || !config->frame)
+        return ERR_INVALID_HANDLE;
+    if ((!data && size) || (data && !size) || size >= INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
+        return AVERROR(EINVAL);
+    if (config->drain_state)
+        return !data ? DECODER_ACCEPTED : AVERROR_EOF;
+    if (config->frame_pending)
+        return DECODER_RECEIVE_FIRST;
+
+    int32_t ret;
+    if (data) {
+        av_packet_unref(config->packet);
+        ret = av_new_packet(config->packet, (int)size);
+        if (ret < 0)
+            return ret;
+        memcpy(config->packet->data, data, size);
+        ret = avcodec_send_packet(config->context, config->packet);
+        av_packet_unref(config->packet);
+    } else {
+        ret = avcodec_send_packet(config->context, NULL);
+    }
+    if (ret == AVERROR(EAGAIN))
+        return DECODER_RECEIVE_FIRST;
+    if (ret < 0)
+        return ret;
+    if (!data)
+        config->drain_state = 1; // Input EOF was actually accepted.
+    return DECODER_ACCEPTED;
+}
+
+int32_t Decoder_ReceivePcm(PAacDecoder config, uint8_t* out0, uint8_t* out1,
+    int32_t capacity, int32_t* sample_count) {
+    if (!sample_count)
+        return AVERROR(EINVAL);
+    *sample_count = 0;
+    if (!config || !config->context || !config->frame)
+        return ERR_INVALID_HANDLE;
+    if (capacity < 0 || (!out0 && (capacity || out1)))
+        return AVERROR(EINVAL);
+    if (config->drain_state == 3)
+        return DECODER_END_OF_STREAM;
+
+    int32_t ret;
+    if (!config->frame_pending && config->drain_state < 2) {
+        av_frame_unref(config->frame);
+        ret = avcodec_receive_frame(config->context, config->frame);
+        if (ret == AVERROR(EAGAIN)) {
+            // The send/receive API forbids EAGAIN after accepted input EOF.
+            return config->drain_state ? AVERROR(EINVAL) : DECODER_NEED_INPUT;
+        }
+        if (ret == AVERROR_EOF) {
+            config->drain_state = 2; // Only now may the resampler be drained.
+        } else if (ret < 0) {
+            return ret;
+        } else {
+            if (config->frame->nb_samples <= 0) {
+                av_frame_unref(config->frame);
+                return DECODER_PCM_CONSUMED;
+            }
+            if (!config->swr_ctx) {
+                ret = init_swr(config, &config->output_options,
+                    &config->frame->ch_layout, config->frame->sample_rate);
+                if (ret < 0)
+                    return ret;
+            }
+            config->pending_capacity = swr_get_out_samples(config->swr_ctx, config->frame->nb_samples);
+            if (config->pending_capacity < 0)
+                return config->pending_capacity;
+            config->frame_pending = 1;
+        }
+    }
+
+    if (config->drain_state == 2 && !config->frame_pending) {
+        if (!config->swr_ctx) {
+            config->drain_state = 3;
+            return DECODER_END_OF_STREAM;
+        }
+        config->pending_capacity = swr_get_out_samples(config->swr_ctx, 0);
+        if (config->pending_capacity < 0)
+            return config->pending_capacity;
+        if (!config->pending_capacity) {
+            config->drain_state = 3;
+            return DECODER_END_OF_STREAM;
+        }
+        config->frame_pending = 2; // A resampler tail is staged.
+    }
+
+    *sample_count = config->pending_capacity;
+    if (!out0)
+        return DECODER_PCM_READY;
+    if (capacity < config->pending_capacity)
+        return ERR_BUFF_TOO_SMALL;
+    if (config->output_options.out_sample_fmt == AV_SAMPLE_FMT_FLTP &&
+        config->output_options.out_channels == 2 && !out1)
+        return ERR_BUFF_HANDLE_INVALID;
+
+    uint8_t* converted[2] = { out0, out1 };
+    const int draining = config->frame_pending == 2;
+    ret = swr_convert(config->swr_ctx, converted, capacity,
+        draining ? NULL : (const uint8_t* const*)config->frame->extended_data,
+        draining ? 0 : config->frame->nb_samples);
+    if (ret < 0)
+        return ret;
+    av_frame_unref(config->frame);
+    config->frame_pending = 0;
+    config->pending_capacity = 0;
+    *sample_count = ret;
+    if (draining && !ret) {
+        config->drain_state = 3;
+        return DECODER_END_OF_STREAM;
+    }
+    return DECODER_PCM_CONSUMED;
 }
 PVOID Decoder_OpenEC3(POutputOptions output_options) {
 
