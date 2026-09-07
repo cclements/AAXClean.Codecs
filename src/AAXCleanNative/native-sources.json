@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Pinned inputs for isolated osx-arm64 development/sanitizer builds; not provenance of the six tracked runtime payloads.",
+  "sources": [
+    {
+      "name": "librempeg",
+      "revision": "33d3035699899c74708bd6cd387dfb4cc5aed26a",
+      "url": "https://codeload.github.com/librempeg/librempeg/tar.gz/33d3035699899c74708bd6cd387dfb4cc5aed26a",
+      "archive": "librempeg.tar.gz",
+      "directory": "librempeg-33d3035699899c74708bd6cd387dfb4cc5aed26a",
+      "sha256": "d1ebb513ed6e28a5c41cdc6ae7e155fa94565780a15daf161c27fa0c80318fbf"
+    },
+    {
+      "name": "fdk-aac",
+      "revision": "7c83d08002332b2730c845eec3497e6bf585dd28",
+      "url": "https://codeload.github.com/mstorsjo/fdk-aac/tar.gz/7c83d08002332b2730c845eec3497e6bf585dd28",
+      "archive": "fdk-aac.tar.gz",
+      "directory": "fdk-aac-7c83d08002332b2730c845eec3497e6bf585dd28",
+      "sha256": "881d71504bce325554414bae4dc71b0ff325a142d313cafadde1e8e208dcea85"
+    },
+    {
+      "name": "lame",
+      "revision": "release-3.100",
+      "url": "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz",
+      "archive": "lame-3.100.tar.gz",
+      "directory": "lame-3.100",
+      "sha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e"
+    }
+  ],
+  "distribution": "Development only. This configuration enables nonfree FDK code; no redistribution approval or shipped-payload replacement is implied. LAME 3.100 matches the existing recipe, not the latest upstream release."
+}

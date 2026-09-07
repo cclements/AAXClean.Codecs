@@ -160,7 +160,7 @@ EXPORT int32_t AacEncoder_EncodeFlush(PAacEncoder config);
 *
 * @param decoder_options options for decoding the audio.
 *
-* @return handle to the decoder instance
+* @return owned handle to the decoder instance, otherwise a negative error code.
 */
 EXPORT PVOID Decoder_OpenAac(PAacDecoderOptions decoder_options);
 
@@ -169,7 +169,7 @@ EXPORT PVOID Decoder_OpenAac(PAacDecoderOptions decoder_options);
 *
 * @param output_options options for decoding the audio.
 *
-* @return handle to the decoder instance
+* @return owned handle to the decoder instance, otherwise a negative error code.
 */
 EXPORT PVOID Decoder_OpenEC3(POutputOptions output_options);
 
@@ -178,10 +178,11 @@ EXPORT PVOID Decoder_OpenEC3(POutputOptions output_options);
 *
 * @param output_options options for decoding the audio.
 *
-* @return handle to the decoder instance
+* @return owned handle to the decoder instance, otherwise a negative error code.
 */
 EXPORT PVOID Decoder_OpenAC4(POutputOptions output_options);
 
+/** Release a successful open exactly once. NULL is allowed; error codes are not handles. */
 EXPORT int32_t Decoder_Close(PAacDecoder config);
 
 /**
@@ -191,7 +192,8 @@ EXPORT int32_t Decoder_Close(PAacDecoder config);
 * 
 * @param config decoder handle.
 * 
-* @param pCompressedAudio A pointer to a buffer containing the AAC-encoded audio frame.
+* @param pCompressedAudio A borrowed buffer containing one compressed audio frame.
+* The bytes are copied during this call; the caller need not supply decoder padding.
 * 
 * @param cbInBufferSize The size, in bytes, of the AAC audio frame.
 * 

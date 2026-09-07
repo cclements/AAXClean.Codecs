@@ -7,7 +7,8 @@ namespace AAXClean.Codecs.Interop;
 
 internal class NativeAacDecode : NativeDecode
 {
-	protected override DecoderHandle Handle { get; }
+	// Allocate the SafeHandle before opening native resources, and adopt only success.
+	protected override DecoderHandle Handle { get; } = new();
 
 	public unsafe NativeAacDecode(EsdsBox esed, WaveFormat waveFormat)
 	{
@@ -23,19 +24,12 @@ internal class NativeAacDecode : NativeDecode
 				asc_size = asc.Length,
 				ASC = pAsc
 			};
-			Handle = Decoder_OpenAac(ref options);
-		}
-
-		long err = Handle.DangerousGetHandle();
-
-		if (err < 0)
-		{
-			throw new Exception($"Error opening AAC Decoder. Code {err}");
+			Handle.Initialize(Decoder_OpenAac(ref options), "AAC");
 		}
 	}
 
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
-	private static extern DecoderHandle Decoder_OpenAac(ref AacDecoderOptions decoder_options);
+	private static extern IntPtr Decoder_OpenAac(ref AacDecoderOptions decoder_options);
 
 	[StructLayout(LayoutKind.Sequential)]
 	private unsafe struct AacDecoderOptions

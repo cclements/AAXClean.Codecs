@@ -74,8 +74,14 @@ internal unsafe abstract class NativeDecode : IDisposable
 	{
 		[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
 		private static extern int Decoder_Close(IntPtr self);
-		private DecoderHandle() : base(IntPtr.Zero, true) { }
-		public override bool IsInvalid => IsClosed || handle == IntPtr.Zero;
+		public DecoderHandle() : base(IntPtr.Zero, true) { }
+		public void Initialize(IntPtr nativeHandle, string codec)
+		{
+			if (nativeHandle.ToInt64() <= 0)
+				throw new Exception($"Error opening {codec} Decoder. Code {nativeHandle.ToInt64()}");
+			SetHandle(nativeHandle);
+		}
+		public override bool IsInvalid => handle.ToInt64() <= 0;
 		protected override bool ReleaseHandle() => Decoder_Close(handle) == 0;
 	}
 }

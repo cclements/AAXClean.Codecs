@@ -1,4 +1,5 @@
 #include "AAXCleanNative.h"
+#include <limits.h>
 
 static int32_t init_swr(PAacDecoder pdec, POutputOptions pOptions, AVChannelLayout* pIn_layout, int32_t in_sample_rate) {
 
@@ -79,16 +80,25 @@ int32_t Decoder_DecodeFlush(PAacDecoder config, uint8_t* outBuff0, uint8_t* outB
 
 int32_t Decoder_DecodeFrame(PAacDecoder config, uint8_t* pCompressedAudio, uint32_t cbInBufferSize)
 {
-    if (!config || !config->context)
+    if (!config || !config->context || !config->packet || !config->frame)
         return ERR_INVALID_HANDLE;
 
-    int32_t ret;
+    if (!pCompressedAudio || !cbInBufferSize || cbInBufferSize >= INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
+        return AVERROR(EINVAL);
 
-    config->packet->size = cbInBufferSize; //input buffer size
-    config->packet->data = pCompressedAudio; // the input buffer
+    // The caller's buffer may end at a page boundary and is only borrowed for
+    // this call. av_new_packet supplies owned storage and zeroed decoder padding.
+    av_packet_unref(config->packet);
+    int32_t ret = av_new_packet(config->packet, (int)cbInBufferSize);
+    if (ret < 0)
+        return ret;
+    memcpy(config->packet->data, pCompressedAudio, cbInBufferSize);
 
     /* send the packet with the compressed data to the decoder */
     ret = avcodec_send_packet(config->context, config->packet);
+    // An accepting decoder retains its own reference. On failure, including
+    // EAGAIN, the caller still owns the original input and may retry it.
+    av_packet_unref(config->packet);
     if (ret < 0)
         return ret;
 
@@ -106,31 +116,12 @@ int32_t Decoder_DecodeFrame(PAacDecoder config, uint8_t* pCompressedAudio, uint3
 }
 
 static int32_t init_frame_packet(PAacDecoder pdec) {
-
-    int32_t ret = 0;
-
     pdec->frame = av_frame_alloc();
-    if (!pdec->frame) {
-        ret = ERR_ALLOC_FAIL;
-        goto failed;
-    }
+    if (!pdec->frame)
+        return ERR_ALLOC_FAIL;
 
     pdec->packet = av_packet_alloc();
-    if (!pdec->packet) {
-        ret = ERR_ALLOC_FAIL;
-        goto failed;
-    }
-
-    return ret;
-
-failed:
-    if (pdec->frame) {
-        av_frame_free(&pdec->frame);
-    }
-    if (pdec->packet) {
-        av_packet_free(&pdec->packet);
-    }
-    return ret;
+    return pdec->packet ? ERR_SUCCESS : ERR_ALLOC_FAIL;
 }
 
 static int32_t init_decoder_context(PAacDecoder* ppdec, enum AVCodecID id) {
@@ -139,14 +130,13 @@ static int32_t init_decoder_context(PAacDecoder* ppdec, enum AVCodecID id) {
     const AVCodec* codec;
     PAacDecoder pdec = NULL;
 
+    *ppdec = NULL;
     pdec = malloc(sizeof(AacDecoder));
     if (!pdec) {
         ret = ERR_ALLOC_FAIL;
         *ppdec = NULL;
         goto failed;
     }
-	*ppdec = pdec;
-
     pdec->context = NULL;
     pdec->swr_ctx = NULL;
     pdec->packet = NULL;
@@ -166,16 +156,13 @@ static int32_t init_decoder_context(PAacDecoder* ppdec, enum AVCodecID id) {
         goto failed;
     }
 
+    // Publish only after initialization succeeds. The caller owns cleanup from
+    // this point onward; a failed initialization leaves no dangling out pointer.
+    *ppdec = pdec;
     return ret;
 
 failed:
-    if (pdec) {
-        if (pdec->context) {
-            avcodec_free_context(&pdec->context);
-            av_free(pdec->context);
-        }
-        free(pdec);
-    }
+    Decoder_Close(pdec);
     return ret;
 }
 
@@ -184,7 +171,6 @@ int32_t Decoder_Close(PAacDecoder pdec)
     if (pdec) {
         if (pdec->context) {
             avcodec_free_context(&pdec->context);
-            av_free(pdec->context);
         }
         if (pdec->swr_ctx) {
             swr_close(pdec->swr_ctx);
@@ -206,7 +192,8 @@ PVOID Decoder_OpenAac(PAacDecoderOptions decoder_options)
     intptr_t ret = 0;
     PAacDecoder pdec = NULL;
 
-    if (!decoder_options || !decoder_options->ASC || decoder_options->asc_size < 2) {
+    if (!decoder_options || !decoder_options->ASC || decoder_options->asc_size < 2 ||
+        decoder_options->asc_size >= INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE) {
         ret = ERR_AAC_CODEC_NOT_FOUND;
         goto failed;
     }
@@ -217,9 +204,9 @@ PVOID Decoder_OpenAac(PAacDecoderOptions decoder_options)
 
     pdec->output_options = decoder_options->output_options;
 
-    /* Copy ASC to AVCodecConbtext.extradata and open the codec*/
+    /* AVCodecContext owns extradata, including the required zeroed padding. */
     pdec->context->extradata_size = decoder_options->asc_size;
-    pdec->context->extradata = av_malloc(pdec->context->extradata_size);
+    pdec->context->extradata = av_mallocz((size_t)pdec->context->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
     if (!pdec->context->extradata) {
         ret = ERR_ALLOC_FAIL;
         goto failed;

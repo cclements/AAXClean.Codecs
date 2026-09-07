@@ -7,7 +7,7 @@ namespace AAXClean.Codecs.Interop;
 
 internal unsafe class NativeAc4Decode : NativeDecode
 {
-	protected override DecoderHandle Handle { get; }
+	protected override DecoderHandle Handle { get; } = new();
 
 	public NativeAc4Decode(Dac4Box dec3, WaveFormat waveFormat)
 	{
@@ -15,11 +15,11 @@ internal unsafe class NativeAc4Decode : NativeDecode
 		ArgumentNullException.ThrowIfNull(waveFormat, nameof(waveFormat));
 
 		OutputOptions options = GetOutputOptions(waveFormat);
-		Handle = Decoder_OpenAC4(ref options);
+		Handle.Initialize(Decoder_OpenAC4(ref options), "AC-4");
 	}
 
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
-	private static extern DecoderHandle Decoder_OpenAC4(ref OutputOptions decoder_options);
+	private static extern IntPtr Decoder_OpenAC4(ref OutputOptions decoder_options);
 
 	[StructLayout(LayoutKind.Sequential)]
 	private struct Ac4DecoderOptions

@@ -9,10 +9,10 @@ internal unsafe class NativeAacEncode : IDisposable
 	protected const string libname = "aaxcleannative";
 	//Factor for converting quality to global_quality
 	private const int FF_QP2LAMBDA = 118;
-	private EncoderHandle Handle { get; }
+	private EncoderHandle Handle { get; } = new();
 
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
-	private static extern EncoderHandle AacEncoder_Open(ref AacEncoderOptions options);
+	private static extern IntPtr AacEncoder_Open(ref AacEncoderOptions options);
 
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
 	private static extern int AacEncoder_EncodeFrame(EncoderHandle self, byte* pWaveAudio1, byte* pWaveAudio2, int nbSamples);
@@ -36,14 +36,7 @@ internal unsafe class NativeAacEncode : IDisposable
 			channels = waveFormat.Channels,
 			sample_fmt = (int)waveFormat.Encoding
 		};
-		Handle = AacEncoder_Open(ref options);
-
-		long err = Handle.DangerousGetHandle();
-
-		if (err < 0)
-		{
-			throw new Exception($"Error opening AAC Decoder. Code {err}");
-		}
+		Handle.Initialize(AacEncoder_Open(ref options));
 	}
 
 	public int EncodeFrame(byte* pWaveAudio1, byte* pWaveAudio2, int nbSamples)
@@ -81,8 +74,14 @@ internal unsafe class NativeAacEncode : IDisposable
 	{
 		[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
 		private static extern int AacEncoder_Close(IntPtr self);
-		private EncoderHandle() : base(IntPtr.Zero, true) { }
-		public override bool IsInvalid => IsClosed || handle == IntPtr.Zero;
+		public EncoderHandle() : base(IntPtr.Zero, true) { }
+		public void Initialize(IntPtr nativeHandle)
+		{
+			if (nativeHandle.ToInt64() <= 0)
+				throw new Exception($"Error opening AAC Encoder. Code {nativeHandle.ToInt64()}");
+			SetHandle(nativeHandle);
+		}
+		public override bool IsInvalid => handle.ToInt64() <= 0;
 		protected override bool ReleaseHandle() => AacEncoder_Close(handle) == 0;
 	}
 

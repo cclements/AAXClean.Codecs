@@ -7,7 +7,7 @@ namespace AAXClean.Codecs.Interop;
 
 internal unsafe class NativeEc3Decode : NativeDecode
 {
-	protected override DecoderHandle Handle { get; }
+	protected override DecoderHandle Handle { get; } = new();
 
 	public NativeEc3Decode(Dec3Box dec3, WaveFormat waveFormat)
 	{
@@ -22,11 +22,11 @@ internal unsafe class NativeEc3Decode : NativeDecode
 			in_subwoofer = (byte)(firstIndSubstream.lfeon ? 1 : 0),
 			in_audio_coding_mode = (byte)firstIndSubstream.acmod,
 		};
-		Handle = Decoder_OpenEC3(ref options);
+		Handle.Initialize(Decoder_OpenEC3(ref options), "E-AC-3");
 	}
 
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
-	private static extern DecoderHandle Decoder_OpenEC3(ref Ec3DecoderOptions decoder_options);
+	private static extern IntPtr Decoder_OpenEC3(ref Ec3DecoderOptions decoder_options);
 
 	[StructLayout(LayoutKind.Sequential)]
 	private struct Ec3DecoderOptions
