@@ -18,8 +18,10 @@ internal sealed class FfmpegAacDecoder : IDisposable
 	private readonly Queue<FrameEntry> PendingMetadata = new();
 	private FrameEntry? CurrentSource;
 	private long? NextOutputStartSample;
+	private long? NextInputStartSample;
 	private bool HasOutput, InputEnded, OutputEnded, Disposed;
 	private long ReceiveProgress;
+	private int ActiveEnumeration;
 	private int EmptyReceives;
 	// A broken codec must not keep a cancellation-insensitive zero-output loop alive.
 	private const int MaxEmptyReceives = 1024;
@@ -92,11 +94,57 @@ internal sealed class FfmpegAacDecoder : IDisposable
 		: 0;
 
 	public IEnumerable<WaveEntry> DecodeWave(FrameEntry input, CancellationToken cancellationToken = default)
-	{
+        => OwnEnumeration(DecodeWaveCore(input, cancellationToken));
+
+    public IEnumerable<WaveEntry> DecodeFlush(CancellationToken cancellationToken = default)
+        => OwnEnumeration(DecodeFlushCore(cancellationToken));
+
+    // Once native PCM is consumed, abandoning enumeration cannot be resumed
+    // without losing samples. Faults, cancellation and early disposal therefore
+    // close this decoder. A fully exhausted operation leaves it reusable.
+    private IEnumerable<WaveEntry> OwnEnumeration(IEnumerable<WaveEntry> operation)
+    {
+        ObjectDisposedException.ThrowIf(Disposed, this);
+        if (Interlocked.CompareExchange(ref ActiveEnumeration, 1, 0) != 0)
+            throw new InvalidOperationException("A decoder output enumeration is already active.");
+        bool completed = false;
+        try
+        {
+            using var outputs = operation.GetEnumerator();
+            while (true)
+            {
+                ObjectDisposedException.ThrowIf(Disposed, this);
+                if (!outputs.MoveNext())
+                    break;
+                yield return outputs.Current;
+            }
+            completed = true;
+        }
+        finally
+        {
+            if (!completed)
+                Dispose();
+            Volatile.Write(ref ActiveEnumeration, 0);
+        }
+    }
+
+    private IEnumerable<WaveEntry> DecodeWaveCore(FrameEntry input, CancellationToken cancellationToken)
+    {
 		ObjectDisposedException.ThrowIf(Disposed, this);
 		ArgumentNullException.ThrowIfNull(input);
 		if (InputEnded || OutputEnded)
 			throw new InvalidOperationException("Decoder input has already ended.");
+		// Output is continuous PCM anchored to the first source coordinate.
+        // A gap/overlap cannot be represented by that mapping; fail before
+        // accepting bytes instead of silently shifting presentation cropping.
+        if (input.StartSample is not long sourceStart || input.SamplesInFrame == 0)
+            throw new InvalidDataException("Compressed input requires a source coordinate and positive duration.");
+        _ = ScaleSource(sourceStart);
+        if (NextInputStartSample is long expected && sourceStart != expected)
+            throw new InvalidDataException("Discontinuous compressed source coordinates are unsupported.");
+        long sourceEnd = checked(sourceStart + input.SamplesInFrame);
+        _ = ScaleSource(sourceEnd);
+        NextInputStartSample = sourceEnd;
 		if (input.FrameData.IsEmpty)
 			throw new InvalidDataException("An empty compressed frame is not an end-of-input marker.");
 
@@ -126,7 +174,7 @@ internal sealed class FfmpegAacDecoder : IDisposable
 			yield return output;
 	}
 
-	public IEnumerable<WaveEntry> DecodeFlush(CancellationToken cancellationToken = default)
+	private IEnumerable<WaveEntry> DecodeFlushCore(CancellationToken cancellationToken)
 	{
 		ObjectDisposedException.ThrowIf(Disposed, this);
 		if (OutputEnded)
@@ -287,7 +335,9 @@ internal sealed class FfmpegAacDecoder : IDisposable
 		return checked((long)ElstBox.ScaleDuration((ulong)sample, inputTimescale, outputSampleRate));
 	}
 	private static Exception ProtocolError(string operation, int error)
-		=> new InvalidDataException($"Error {operation}. Native status {error} ({NativeDecode.GetFFmpegErrorString(error)}).");
+		=> error == NativeDecode.InputFormatChanged
+            ? new InvalidDataException("The decoded audio format changed during conversion; changing sample rate, sample format or channel layout is unsupported.")
+            : new InvalidDataException($"Error {operation}. Native status {error} ({NativeDecode.GetFFmpegErrorString(error)}).");
 	public void Dispose()
 	{
 		if (Disposed) return;

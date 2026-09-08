@@ -21,6 +21,32 @@ if (args[3] == "reject-v1")
     Console.WriteLine("PASS old native payload rejected before conversion");
     return;
 }
+if (args[3] == "reject-format-change")
+{
+    var packets = ReadPackets("eac3-rate-change");
+    bool failed = false;
+    using (var decoder = MakeDecoder("eac3"))
+    {
+        try
+        {
+            foreach (var packet in packets) _ = decoder.DecodeWave(packet).ToArray();
+            _ = decoder.DecodeFlush().ToArray();
+        }
+        catch (InvalidDataException error) when (error.Message.Contains("audio format changed")) { failed = true; }
+    }
+    if (!failed) throw new InvalidOperationException("format change was not rejected by managed decoder");
+    using AacToWave filter = new(MakeDecoder("eac3"));
+    Sink sink = new(); filter.LinkTo(sink); failed = false;
+    try
+    {
+        foreach (var packet in packets) await filter.AddInputAsync(packet);
+        await filter.CompleteAsync();
+    }
+    catch (InvalidDataException error) when (error.Message.Contains("audio format changed")) { failed = true; }
+    if (!failed || sink.Flushed) throw new InvalidOperationException("format change did not fail linked completion");
+    Console.WriteLine("PASS real native format change fails managed decode and linked completion");
+    return;
+}
 if (args[3] != "v2") throw new ArgumentException("unknown mode");
 List<object> results = [];
 foreach (string codec in new[] { "aac", "eac3", "eac3-paired" })

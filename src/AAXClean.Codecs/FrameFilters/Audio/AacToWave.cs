@@ -2,6 +2,7 @@ using AAXClean.FrameFilters;
 using Mpeg4Lib.Boxes;
 using System;
 using System.Threading;
+using System.Runtime.ExceptionServices;
 using System.Threading.Tasks;
 
 namespace AAXClean.Codecs.FrameFilters.Audio;
@@ -16,6 +17,7 @@ internal sealed class AacToWave : FrameFilterBase<FrameEntry>
     private FrameFilterBase<WaveEntry>? Linked;
     private CancellationToken CancellationToken;
     private bool HasInput;
+    private ExceptionDispatchInfo? Failure;
 
     public AacToWave(AudioSampleEntry audioSampleEntry, uint inputTimescale, WaveFormatEncoding waveFormat, SampleRate sampleRate, bool stereo)
         => AacDecoder = new FfmpegAacDecoder(audioSampleEntry, inputTimescale, waveFormat, sampleRate, stereo);
@@ -43,13 +45,29 @@ internal sealed class AacToWave : FrameFilterBase<FrameEntry>
     }
     protected override async Task HandleInputDataAsync(FrameEntry input)
     {
-        foreach (var output in AacDecoder.DecodeWave(input, CancellationToken))
-            await ForwardAsync(output);
+        try
+        {
+            foreach (var output in AacDecoder.DecodeWave(input, CancellationToken))
+                await ForwardAsync(output);
+        }
+        catch (Exception error)
+        {
+            Interlocked.CompareExchange(ref Failure, ExceptionDispatchInfo.Capture(error), null);
+            throw;
+        }
     }
     protected override async Task FlushAsync()
     {
-        foreach (var output in AacDecoder.DecodeFlush(CancellationToken))
-            await ForwardAsync(output);
+        try
+        {
+            foreach (var output in AacDecoder.DecodeFlush(CancellationToken))
+                await ForwardAsync(output);
+        }
+        catch (Exception error)
+        {
+            Interlocked.CompareExchange(ref Failure, ExceptionDispatchInfo.Capture(error), null);
+            throw;
+        }
     }
     private Task ForwardAsync(WaveEntry output)
     {
@@ -59,10 +77,21 @@ internal sealed class AacToWave : FrameFilterBase<FrameEntry>
     }
     protected override async Task CompleteInternalAsync()
     {
-        await base.CompleteInternalAsync();
-        if (!HasInput)
-            await FlushAsync();
-        await (Linked?.CompleteAsync() ?? Task.CompletedTask);
+        try
+        {
+            await base.CompleteInternalAsync();
+            if (!HasInput)
+                await FlushAsync();
+            await (Linked?.CompleteAsync() ?? Task.CompletedTask);
+        }
+        catch
+        {
+            // The shared channel owner can report ChannelClosedException while
+            // closing an already-failed writer. Preserve this filter's original
+            // decoder/forwarding failure instead of losing the useful cause.
+            Failure?.Throw();
+            throw;
+        }
     }
     protected override void Dispose(bool disposing)
     {

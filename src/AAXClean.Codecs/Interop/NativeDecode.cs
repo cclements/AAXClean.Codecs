@@ -7,6 +7,7 @@ namespace AAXClean.Codecs.Interop;
 internal unsafe abstract class NativeDecode : IDisposable
 {
 	internal const int Accepted = 0, ReceiveFirst = 1;
+	internal const int InputFormatChanged = -13;
 	internal const int PcmConsumed = 0, NeedInput = 1, PcmReady = 2, EndOfStream = 3;
 	protected abstract DecoderHandle Handle { get; }
 	protected const string libname = "aaxcleannative";

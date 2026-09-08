@@ -183,6 +183,112 @@ public class DecoderDrainTests
         Assert.ThrowsExactly<ObjectDisposedException>(() => decoder.DecodeWave(Input(0, 1)).ToArray());
     }
 
+    [TestMethod]
+    public async Task LinkedPipeline_FormatChangeErrorFailsCompletionWithoutFlushingSink()
+    {
+        FakeNative native = new();
+        native.OnSubmit = count => { if (count == 1) native.AddPcm(4); else native.Fail(-13); };
+        using AacToWave filter = new(new FfmpegAacDecoder(native, Pcm, 16000));
+        Sink sink = new(); filter.LinkTo(sink);
+        await filter.AddInputAsync(Input(0, 4));
+        await filter.AddInputAsync(Input(4, 4));
+        await Assert.ThrowsExactlyAsync<InvalidDataException>(() => filter.CompleteAsync());
+        Assert.IsFalse(sink.Flushed);
+        Assert.AreEqual(0, native.FinishCalls);
+    }
+
+    [TestMethod]
+    public void AbandonedOutput_ClosesDecoderInsteadOfSilentlyLosingRemainingPcm()
+    {
+        FakeNative native = new(); native.OnSubmit = _ => { native.AddPcm(2); native.AddPcm(2); };
+        FfmpegAacDecoder decoder = new(native, Pcm, 16000);
+        using (var output = decoder.DecodeWave(Input(0, 4)).GetEnumerator())
+            Assert.IsTrue(output.MoveNext());
+        Assert.AreEqual(1, native.Disposals);
+        Assert.ThrowsExactly<ObjectDisposedException>(() => decoder.DecodeFlush().ToArray());
+        decoder.Dispose(); Assert.AreEqual(1, native.Disposals);
+    }
+
+    [TestMethod]
+    public void SuspendedOutput_CannotResumeNativeReadsAfterDecoderDisposal()
+    {
+        FakeNative native = new(); native.OnSubmit = _ => { native.AddPcm(2); native.AddPcm(2); };
+        using FfmpegAacDecoder decoder = new(native, Pcm, 16000);
+        using var output = decoder.DecodeWave(Input(0, 4)).GetEnumerator();
+        Assert.IsTrue(output.MoveNext()); int reads = native.ReceiveCalls;
+        decoder.Dispose();
+        Assert.ThrowsExactly<ObjectDisposedException>(() => output.MoveNext());
+        Assert.AreEqual(reads, native.ReceiveCalls);
+    }
+
+    [TestMethod]
+    public void NativeFault_IsTerminalEvenIfTransportWouldLaterReportSuccess()
+    {
+        FakeNative native = new(); native.OnSubmit = _ => native.Fail(-13);
+        using FfmpegAacDecoder decoder = new(native, Pcm, 16000);
+        Assert.ThrowsExactly<InvalidDataException>(() => decoder.DecodeWave(Input(0, 4)).ToArray());
+        Assert.AreEqual(1, native.Disposals);
+        Assert.ThrowsExactly<ObjectDisposedException>(() => decoder.DecodeFlush().ToArray());
+        Assert.AreEqual(0, native.FinishCalls);
+    }
+
+    [TestMethod]
+    public void OverlappingEnumerations_AreRejectedWithoutAdvancingTransport()
+    {
+        FakeNative native = new(); native.OnSubmit = _ => native.AddPcm(2);
+        using FfmpegAacDecoder decoder = new(native, Pcm, 16000);
+        using var output = decoder.DecodeWave(Input(0, 2)).GetEnumerator();
+        Assert.IsTrue(output.MoveNext());
+        Assert.ThrowsExactly<InvalidOperationException>(() => decoder.DecodeFlush().ToArray());
+        Assert.AreEqual(0, native.FinishCalls);
+        Assert.IsFalse(output.MoveNext());
+    }
+
+    [TestMethod]
+    public void InvalidSourcePosition_IsRejectedBeforePacketAcceptance()
+    {
+        FakeNative native = new();
+        using FfmpegAacDecoder decoder = new(native, Pcm, 16000);
+        Assert.ThrowsExactly<ArgumentOutOfRangeException>(() => decoder.DecodeWave(Input(-1, 4)).ToArray());
+        Assert.IsEmpty(native.Submitted);
+    }
+
+    [TestMethod]
+    public void DelayedOutput_PreservesSourceOwnershipAcrossResampledBoundaries()
+    {
+        FakeNative native = new(); native.OnFinish = () => { native.AddPcm(8); native.End(); };
+        using FfmpegAacDecoder decoder = new(native, Pcm, 48000);
+        FrameEntry first = Input(480000000000, 12), second = Input(480000000012, 12);
+        _ = decoder.DecodeWave(first).ToArray(); _ = decoder.DecodeWave(second).ToArray();
+        var output = decoder.DecodeFlush().ToArray();
+        CollectionAssert.AreEqual(new long?[] { 160000000000, 160000000004 }, output.Select(e => e.StartSample).ToArray());
+        Assert.AreSame(first.Chunk, output[0].Chunk); Assert.AreSame(second.Chunk, output[1].Chunk);
+        CollectionAssert.AreEqual(new uint[] { 4, 4 }, output.Select(e => e.SamplesInFrame).ToArray());
+    }
+
+    [TestMethod]
+    [DataRow(3L)]
+    [DataRow(5L)]
+    public void SourceGapOrOverlap_FailsBeforeAcceptingTheDiscontinuousPacket(long nextStart)
+    {
+        FakeNative native = new();
+        using FfmpegAacDecoder decoder = new(native, Pcm, 16000);
+        _ = decoder.DecodeWave(Input(0, 4)).ToArray();
+        Assert.ThrowsExactly<InvalidDataException>(() => decoder.DecodeWave(Input(nextStart, 4)).ToArray());
+        Assert.HasCount(1, native.Submitted);
+        Assert.AreEqual(1, native.Disposals);
+    }
+
+    [TestMethod]
+    public void MissingSourceCoordinate_FailsBeforeAcceptingPacket()
+    {
+        FakeNative native = new();
+        using FfmpegAacDecoder decoder = new(native, Pcm, 16000);
+        FrameEntry input = new() { FrameData = new byte[] { 1 }, SamplesInFrame = 4 };
+        Assert.ThrowsExactly<InvalidDataException>(() => decoder.DecodeWave(input).ToArray());
+        Assert.IsEmpty(native.Submitted);
+    }
+
     private static FrameEntry Input(long start, uint count, byte value = 1) => new()
     {
         Chunk = new ChunkEntry { TrackId = 1, ChunkIndex = 0, ChunkOffset = 0, FirstSample = start,
@@ -211,6 +317,7 @@ public class DecoderDrainTests
         public int BytesPerSample = 4;
         public bool EndlessEmpty;
         public void AddPcm(int count, byte value = 1) => outputs.Enqueue((PcmReady, count, value));
+        public void Fail(int error) => outputs.Enqueue((error, 0, 0));
         public void End() => outputs.Enqueue((EndOfStream, 0, 0));
         public override int SubmitPacket(ReadOnlyMemory<byte> data)
         {

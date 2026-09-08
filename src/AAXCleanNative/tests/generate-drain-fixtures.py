@@ -62,6 +62,18 @@ for codec,rate,length,out_rate in [('aac',44100,7201,16000),('eac3',48000,9809,3
         packetCount=len(packets),referenceSamplesPerChannel=reference.stat().st_size//4,
         asc=asc.hex() if asc else None,source='generated sine plus three impulses; no provider media'))
 manifest.append(dict(codec='ac4',status='no installed AC4 encoder; real coded-frame differential fixture not generated'))
+# A real coded sample-rate change must be rejected before stale resampling.
+changed=root/'eac3-32000.eac3'
+run(['-i',root/'eac3.wav','-ar','32000','-ac','2','-c:a','eac3','-b:a','192k','-f','eac3',changed])
+data=changed.read_bytes();packets=[];offset=0
+while offset<len(data):
+    assert data[offset:offset+2]==b'\x0b\x77'
+    size=2*((((data[offset+2]&7)<<8)|data[offset+3])+1)
+    assert size>0 and offset+size<=len(data)
+    packets.append(data[offset:offset+size]);offset+=size
+packet_file(root/'eac3-32000.packets',packets)
+(root/'eac3-rate-change.packets').write_bytes((root/'eac3.packets').read_bytes()+(root/'eac3-32000.packets').read_bytes())
+manifest.append(dict(codec='eac3-rate-change',expected='terminal unsupported decoded-format error',inputRates=[48000,32000]))
 files={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(root.iterdir()) if p.is_file()}
 (root/'manifest.json').write_text(json.dumps(dict(fixtures=manifest,files=files),indent=2)+'\n')
 print(json.dumps(manifest,indent=2))

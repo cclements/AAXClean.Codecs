@@ -1,7 +1,7 @@
 #include "AAXCleanNative.h"
 #include <limits.h>
 
-static int32_t init_swr(PAacDecoder pdec, POutputOptions pOptions, AVChannelLayout* pIn_layout, int32_t in_sample_rate) {
+static int32_t init_swr(PAacDecoder pdec, POutputOptions pOptions, AVChannelLayout* pIn_layout, int32_t in_sample_rate, int32_t in_sample_fmt) {
 
     int32_t ret = 0;
     int32_t out_sample_fmt;
@@ -26,7 +26,7 @@ static int32_t init_swr(PAacDecoder pdec, POutputOptions pOptions, AVChannelLayo
     if (swr_alloc_set_opts2(
         &pdec->swr_ctx,
         &out_layout, pOptions->out_sample_fmt, pOptions->out_sample_rate,
-        pIn_layout, pdec->context->sample_fmt, in_sample_rate, 0, NULL) < 0) {
+        pIn_layout, in_sample_fmt, in_sample_rate, 0, NULL) < 0) {
         ret = ERR_SWR_INIT_FAIL;
         goto failed;
     }
@@ -36,9 +36,16 @@ static int32_t init_swr(PAacDecoder pdec, POutputOptions pOptions, AVChannelLayo
         goto failed;
     }
 
+    if (av_channel_layout_copy(&pdec->input_layout, pIn_layout) < 0) {
+        ret = ERR_ALLOC_FAIL;
+        goto failed;
+    }
+    pdec->input_sample_rate = in_sample_rate;
+    pdec->input_sample_fmt = in_sample_fmt;
     return ret;
 
 failed:
+    av_channel_layout_uninit(&pdec->input_layout);
     if (pdec->swr_ctx) {
         swr_close(pdec->swr_ctx);
         swr_free(&pdec->swr_ctx);
@@ -109,7 +116,7 @@ int32_t Decoder_DecodeFrame(PAacDecoder config, uint8_t* pCompressedAudio, uint3
 
     if (!config->swr_ctx) {
         /*Initialize the filter after the first successful frame receipt */
-        ret = init_swr(config, &config->output_options, &config->frame->ch_layout, config->frame->sample_rate);
+        ret = init_swr(config, &config->output_options, &config->frame->ch_layout, config->frame->sample_rate, config->frame->format);
     }
 
     return ret;
@@ -144,6 +151,10 @@ static int32_t init_decoder_context(PAacDecoder* ppdec, enum AVCodecID id) {
     pdec->drain_state = 0;
     pdec->frame_pending = 0;
     pdec->pending_capacity = 0;
+    pdec->terminal_error = 0;
+    pdec->input_sample_rate = 0;
+    pdec->input_sample_fmt = AV_SAMPLE_FMT_NONE;
+    pdec->input_layout = (AVChannelLayout){0};
 
     codec = avcodec_find_decoder(id);
 
@@ -185,6 +196,7 @@ int32_t Decoder_Close(PAacDecoder pdec)
         if (pdec->packet) {
             av_packet_free(&pdec->packet);
         }
+        av_channel_layout_uninit(&pdec->input_layout);
         free(pdec);
     }
     return ERR_SUCCESS;
@@ -280,6 +292,8 @@ int32_t Decoder_SubmitPacket(PAacDecoder config, const uint8_t* data, uint32_t s
         return ERR_INVALID_HANDLE;
     if ((!data && size) || (data && !size) || size >= INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
         return AVERROR(EINVAL);
+    if (config->terminal_error)
+        return config->terminal_error;
     if (config->drain_state)
         return !data ? DECODER_ACCEPTED : AVERROR_EOF;
     if (config->frame_pending)
@@ -315,6 +329,8 @@ int32_t Decoder_ReceivePcm(PAacDecoder config, uint8_t* out0, uint8_t* out1,
         return ERR_INVALID_HANDLE;
     if (capacity < 0 || (!out0 && (capacity || out1)))
         return AVERROR(EINVAL);
+    if (config->terminal_error)
+        return config->terminal_error;
     if (config->drain_state == 3)
         return DECODER_END_OF_STREAM;
 
@@ -337,9 +353,19 @@ int32_t Decoder_ReceivePcm(PAacDecoder config, uint8_t* out0, uint8_t* out1,
             }
             if (!config->swr_ctx) {
                 ret = init_swr(config, &config->output_options,
-                    &config->frame->ch_layout, config->frame->sample_rate);
+                    &config->frame->ch_layout, config->frame->sample_rate, config->frame->format);
                 if (ret < 0)
                     return ret;
+            }
+            // The resampler owns a fixed input contract. A changed decoded
+            // format must never be interpreted using the previous frame's rate,
+            // planes or layout. Persist failure so retry/EOF cannot hide it.
+            if (config->frame->sample_rate != config->input_sample_rate ||
+                config->frame->format != config->input_sample_fmt ||
+                av_channel_layout_compare(&config->frame->ch_layout, &config->input_layout) != 0) {
+                config->terminal_error = ERR_DECODER_INPUT_FORMAT_CHANGED;
+                av_frame_unref(config->frame);
+                return config->terminal_error;
             }
             config->pending_capacity = swr_get_out_samples(config->swr_ctx, config->frame->nb_samples);
             if (config->pending_capacity < 0)

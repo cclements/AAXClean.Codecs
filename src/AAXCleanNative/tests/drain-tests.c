@@ -14,7 +14,20 @@ static int32_t (*legacy_submit)(PAacDecoder, uint8_t*, uint32_t);
 static int32_t (*legacy_receive)(PAacDecoder, uint8_t*, uint8_t*, int32_t);
 static int32_t (*legacy_flush)(PAacDecoder, uint8_t*, uint8_t*, uint32_t);
 static long total_samples, pcm_frames;
-static int receive_first, final_state;
+static int receive_first, final_state, expect_format_change;
+
+static int checked_receive(PAacDecoder decoder, int state) {
+    if (state != ERR_DECODER_INPUT_FORMAT_CHANGED) return state;
+    assert(expect_format_change);
+    int32_t count = -1;
+    assert(receive_pcm(decoder, NULL, NULL, 0, &count) == state && count == 0);
+    assert(submit(decoder, NULL, 0) == state);
+    uint8_t byte = 0;
+    assert(submit(decoder, &byte, 1) == state);
+    assert(close_decoder(decoder) == 0);
+    printf("PASS: real coded format change rejected terminally after %ld valid samples\n", total_samples);
+    exit(0);
+}
 
 static int receive_available(PAacDecoder decoder, FILE* output) {
     for (int guard = 0; guard < 100000; guard++) {
@@ -22,6 +35,7 @@ static int receive_available(PAacDecoder decoder, FILE* output) {
         int state = receive_pcm(decoder, NULL, NULL, 0, &needed);
         if (state == DECODER_NEED_INPUT || state == DECODER_END_OF_STREAM) return state;
         if (state == DECODER_PCM_CONSUMED) { assert(needed == 0); continue; }
+        checked_receive(decoder, state);
         assert(state == DECODER_PCM_READY && needed > 0);
         int32_t again = -1;
         assert(receive_pcm(decoder, NULL, NULL, 0, &again) == state && again == needed);
@@ -49,6 +63,7 @@ int main(int argc, char** argv) {
     LOAD(open_aac, "Decoder_OpenAac"); LOAD(open_ec3, "Decoder_OpenEC3");
     LOAD(close_decoder, "Decoder_Close");
     const int legacy = strcmp(argv[5], "legacy") == 0;
+    expect_format_change = strcmp(argv[5], "reject-change") == 0;
     if (legacy) {
         LOAD(legacy_submit, "Decoder_DecodeFrame");
         LOAD(legacy_receive, "Decoder_ReceiveDecodedFrame");
@@ -121,6 +136,7 @@ int main(int argc, char** argv) {
         assert(final_state == DECODER_END_OF_STREAM);
         assert(receive_available(decoder, output) == DECODER_END_OF_STREAM);
     }
+    assert(!expect_format_change && "format change incorrectly reported successful EOF");
     fclose(output); assert(close_decoder(decoder) == 0);
     printf("{\"codec\":\"%s\",\"legacy\":%s,\"packets\":%d,\"samplesPerChannel\":%ld,\"pcmFrames\":%ld,\"receiveFirst\":%d,\"finalState\":%d}\n",
         argv[3], legacy ? "true" : "false", packets, total_samples, pcm_frames, receive_first, final_state);

@@ -48,6 +48,10 @@ typedef struct AacDecoder {
     int32_t drain_state;
     int32_t frame_pending;
     int32_t pending_capacity;
+    int32_t terminal_error;
+    int32_t input_sample_rate;
+    int32_t input_sample_fmt;
+    AVChannelLayout input_layout;
 }AacDecoder, * PAacDecoder;
 
 typedef struct AacDecoderOptions {
@@ -88,6 +92,7 @@ static LogCallbackType LogCallback;
 #define ERR_AAC_DECODE_FAIL (-10)
 #define ERR_SWR_OUTPUT_CHANNELS_UNSUPPORTED (-11)
 #define ERR_SWR_OUTPUT_FORMAT_UNSUPPORTED (-12)
+#define ERR_DECODER_INPUT_FORMAT_CHANGED (-13)
 
 /**
 * Open an AAC-LC audio encoder instance. Only supports AV_SAMPLE_FMT_FLTP
