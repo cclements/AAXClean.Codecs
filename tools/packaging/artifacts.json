@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "lane": "shipping",
+  "version": "UNASSIGNED",
+  "parser": {},
+  "files": [],
+  "status": "BLOCKED: no six-RID v2 execution/distribution set admitted. Populate from reviewed staging receipts; never fall back to bins/."
+}

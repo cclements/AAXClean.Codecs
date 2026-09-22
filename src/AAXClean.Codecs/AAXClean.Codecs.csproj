@@ -45,4 +45,24 @@
 	  <ProjectReference Include="..\NAudio.Lame\NAudio.Lame.csproj" />
 	</ItemGroup>
 	
+  <!-- Standard packing must not combine v2 managed code with tracked v1 payloads. -->
+  <PropertyGroup>
+    <PackageAdmissionRoot Condition="'$(PackageAdmissionRoot)' == ''">$(MSBuildProjectDirectory)/../..</PackageAdmissionRoot>
+    <PackageArtifactManifest Condition="'$(PackageArtifactManifest)' == ''">$(PackageAdmissionRoot)/tools/packaging/artifacts.json</PackageArtifactManifest>
+    <PackageAdmissionPython Condition="'$(PackageAdmissionPython)' == ''">python3</PackageAdmissionPython>
+  </PropertyGroup>
+  <Target Name="PackageAdmission" BeforeTargets="_IntermediatePack;GenerateNuspec">
+    <Error Condition="'$(NuspecFile)' == ''" Text="Packing requires an explicit staged NuspecFile and artifact manifest. See tools/packaging/README.md." />
+    <Error Condition="'$(NuspecBasePath)' != '' and '$(NuspecBasePath)' != '$(PackageAdmissionRoot)'" Text="NuspecBasePath must match PackageAdmissionRoot so packing uses the verified inputs." />
+    <PropertyGroup>
+      <NuspecBasePath>$(PackageAdmissionRoot)</NuspecBasePath>
+    </PropertyGroup>
+    <Exec Command="&quot;$(PackageAdmissionPython)&quot; &quot;$(MSBuildProjectDirectory)/../../tools/packaging/preflight.py&quot; --root &quot;$(PackageAdmissionRoot)&quot; --manifest &quot;$(PackageArtifactManifest)&quot; --nuspec &quot;$(NuspecFile)&quot; --version &quot;$(PackageVersion)&quot;" />
+  </Target>
+  <Target Name="PackageArchiveAdmission" AfterTargets="Pack">
+    <PropertyGroup>
+      <_PackageAdmissionArchive>$([System.IO.Path]::Combine('$(PackageOutputPath)', '$(PackageId).$(PackageVersion).nupkg'))</_PackageAdmissionArchive>
+    </PropertyGroup>
+    <Exec Command="&quot;$(PackageAdmissionPython)&quot; &quot;$(MSBuildProjectDirectory)/../../tools/packaging/preflight.py&quot; --root &quot;$(PackageAdmissionRoot)&quot; --manifest &quot;$(PackageArtifactManifest)&quot; --nuspec &quot;$(NuspecFile)&quot; --version &quot;$(PackageVersion)&quot; --archive &quot;$(_PackageAdmissionArchive)&quot;" />
+  </Target>
 </Project>

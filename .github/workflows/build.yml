@@ -54,13 +54,17 @@ jobs:
           fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
 
+      - name: Package admission regressions
+        run: python3 -m unittest discover -s tools/packaging -p 'test_*.py' -v
+
       - name: Build and Pack
         id: build_pack
         run: |
           nuspec_relative=$(realpath --relative-to="$(dirname ${{ inputs.project_file }})" "${{ inputs.nuspec_file }}")
           dotnet build ${{ inputs.project_file }} -c ${{ env.DOTNET_CONFIGURATION }}
-          dotnet pack ${{ inputs.project_file }} --no-build -c ${{ env.DOTNET_CONFIGURATION }} -o . -p:NuspecFile="$nuspec_relative" -p:NuspecProperties="version=${{ steps.get_version.outputs.version }}"
+          dotnet pack ${{ inputs.project_file }} --no-build -c ${{ env.DOTNET_CONFIGURATION }} -o . -p:NuspecFile="$nuspec_relative" -p:PackageVersion="${{ steps.get_version.outputs.version }}" -p:NuspecProperties="version=${{ steps.get_version.outputs.version }}"
           nupkg=$(ls *.nupkg)
+          python3 tools/packaging/preflight.py --root . --manifest tools/packaging/artifacts.json --nuspec "${{ inputs.nuspec_file }}" --version "${{ steps.get_version.outputs.version }}" --archive "$nupkg"
           echo "nupkg=${nupkg}" >> "${GITHUB_OUTPUT}"
           
       - name: Upload Artifact
