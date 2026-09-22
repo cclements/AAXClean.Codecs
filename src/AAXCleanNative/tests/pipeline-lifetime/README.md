@@ -7,11 +7,15 @@ runs in its own process. This proves prompt ownership cleanup, not eventual
 SafeHandle finalization. The probe wraps the actual native implementation and
 FDK codec; no codec behavior is mocked.
 
-Eight cases cover single and multipart completion, output-construction failure,
+Ten cases cover single and multipart completion, output-construction failure,
 short-input flush failure and longer-input encoding/write failure. Multipart
 success uses three chapters and requires zero live resources before every next
 output callback. Fault cases preserve the exact injected exception and verify
-that the intended pipeline stage threw. All cases require exactly one native
+that the intended pipeline stage threw. Two additional chain cases inject an upstream transform failure after actual AAC
+payload has been written and verify that single/multipart downstream encoders
+finish and close before completion returns. These require the corrected parser
+filter lifecycle; Codecs production and native bytes are unchanged.
+All cases require exactly one native
 close per opened encoder before filter disposal, then verify repeated disposal
 cannot close a handle again.
 
@@ -44,3 +48,8 @@ the corrected source passes all eight on both managed targets under ASan, with
 .NET 10.0.10 hosting both. Full Codecs consumers pass 65/65 per target and twelve
 independently decoded generated files per target. The correction does not change
 native bytes, sample timing, stream ownership or the public filtering API.
+
+The chain contract also requires exact original exception identity, successful
+joining of the linked worker and repeated completion/disposal. These are failed
+operations; flushing a buffered prefix during cleanup is not successful output
+publication or recovery-journal proof.
