@@ -1,11 +1,15 @@
-# build-windows.yml
-# Reusable workflow that builds the Windows versions of Libation.
+# Reusable library build with explicit optional NuGet publication.
 ---
 name: build
 
 on:
   workflow_call:
     inputs:
+      publish:
+        type: boolean
+        description: 'Publish the built package; failures and duplicates fail the job'
+        required: false
+        default: false
       version_override:
         type: string
         description: 'Version number override'
@@ -30,7 +34,7 @@ env:
 
 jobs:
   build:
-    name: Build and Publish
+    name: ${{ inputs.publish && 'Build and Publish' || 'Build and Validate' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -41,6 +45,9 @@ jobs:
         env:
           NUGET_AUTH_TOKEN: ${{ secrets.nuget_token }}
           
+      - name: Publication contract regressions
+        run: python3 -m unittest discover -s scripts -p 'test_publish.py' -v
+
       - name: Get version
         id: get_version
         working-directory: 
@@ -76,7 +83,9 @@ jobs:
           retention-days: 7
           
       - name: Publish nupkg
-        continue-on-error : true
-        run: |
-          dotnet nuget push '${{ steps.build_pack.outputs.nupkg }}' -s ${{ env.NUGET_SOURCE }} -k ${{ secrets.nuget_token }} --skip-duplicate
+        if: ${{ inputs.publish }}
+        env:
+          NUGET_API_KEY: ${{ secrets.nuget_token }}
+          PACKAGE_PATH: ${{ steps.build_pack.outputs.nupkg }}
+        run: bash scripts/publish-package.sh "$PACKAGE_PATH" "$NUGET_SOURCE"
               
