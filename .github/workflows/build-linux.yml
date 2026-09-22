@@ -1,54 +1,45 @@
+# Pinned development verification. NONFREE binaries are never uploaded.
 on:
   workflow_call:
     inputs:
       architecture:
         type: string
-        description: "CPU architecture targeted by the build."
         required: true
       runner:
         type: string
         required: true
-env:
-  DOCKER_IMAGE: "mbucari1/aaxclean:latest"
+
+permissions:
+  contents: read
+
 jobs:
   build:
-    name: "Linux Docker Build (${{ inputs.architecture }})"
+    name: "linux-${{ inputs.architecture }} pinned native checks"
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
     steps:
-        
       - uses: actions/checkout@v6
-      
-      - name: Build libAAXCleanNative
-        working-directory: ./src
-        run: |
-          
-          DEST_DIR=runtimes/linux-${{ inputs.architecture }}/native
-          mkdir -p $DEST_DIR
-          
-          SRC_DIR="$(pwd)/AAXCleanNative"
-          MOUNT_DIR="/mnt/aaxclean"
-          
-          docker pull ${{ env.DOCKER_IMAGE }}
-          
-          DOCKER_CMD="docker run --rm --volume ${SRC_DIR}:${MOUNT_DIR} -w ${MOUNT_DIR} ${{ env.DOCKER_IMAGE }} bash -c"
-          
-          $DOCKER_CMD "gcc -fPIC -c AacDecoder.c -c AacEncoder.c"
-          $DOCKER_CMD "gcc -v -shared -fPIC -Wl,-v -Wl,-Bsymbolic -Wl,--no-undefined -Wl,-soname,libaaxcleannative.so.1 -o libaaxcleannative.so AacEncoder.o AacDecoder.o -lc -lavfilter -lswresample -lavformat -lavcodec -lavutil -lfdk-aac -l:libmp3lame.a -lm -lrt"
-          
-          mv "$SRC_DIR/libaaxcleannative.so" $DEST_DIR
-      
-      - name: Bundle Artifacts
-        id: bundle
-        working-directory: ./src
-        run: |
-          ARTIFACT=native_linux-${{ inputs.architecture }}.tar.gz
-          tar -cz -f $ARTIFACT runtimes
-          echo "artifact=${ARTIFACT}" >> "${GITHUB_OUTPUT}"
-          
-      - name: Upload library
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+      - name: Build pinned sources
+        run: bash src/AAXCleanNative/build-native.sh artifacts/native release linux-${{ inputs.architecture }}
+      - name: Execute matching-host drain and error checks
+        run: python3 src/AAXCleanNative/native-receipt.py verify --source src/AAXCleanNative --build artifacts/native/release --rid linux-${{ inputs.architecture }}
+      - name: Upload verification records only
+        if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ steps.bundle.outputs.artifact }}
-          path: ./src/${{ steps.bundle.outputs.artifact }}
-          if-no-files-found: error
+          name: native-records-linux-${{ inputs.architecture }}
+          path: |
+            artifacts/native/release/build-receipt.json
+            artifacts/native/release/native-verification.json
+            artifacts/native/release/toolchain.txt
+            artifacts/native/release/exports.txt
+            artifacts/native/release/linked-libraries.txt
+            artifacts/native/release/build.log
+            artifacts/native/release/verify-*.log
+          if-no-files-found: warn
           retention-days: 7

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "description": "Synthetic sine waves and impulses generated locally; no provider media. AAC and E-AC-3 only. Counts are independent FFmpeg reference output, not signal-alignment proof.",
+  "generator": "../generate-drain-fixtures.py",
+  "generator_sha256": "45eb4728e7612cf0d8d08b0705aa6d28c96ae5a3bdb7262785d693d40bde7645",
+  "files": {
+    "aac.asc": "ba3d722a88cacce18f22962612eda4d50e7a61cd9b7db60694043efed2a61448",
+    "aac.packets": "16cc50b240516f7dcaf3206799bb41c5ffabf8c984b62d016a1713e07fbabeca",
+    "eac3.packets": "ebe73ef2dd132a494f9512c6e248069b6b16b6c5d6692afb9436802e655d9c08",
+    "eac3-paired.packets": "28db73c1f2990d072edd72605e67b69b5e4d3b42191faa054c32e8b21c9ea5b4",
+    "eac3-rate-change.packets": "7e7ccdd27b579ceb3b9f0ec54bd5a89d18594e7658bfa389f7d10a07ffacf868",
+    "ffmpeg-version.txt": "4db45f7e79a457642a487a65a67bfe6be66b0cee1bd461fa5b432b373cdfbc0e"
+  },
+  "samples_per_channel": {
+    "aac": 3344,
+    "eac3": 7168,
+    "eac3-paired": 7168
+  }
+}

@@ -1,6 +1,10 @@
 #include "../AAXCleanNative.h"
 #include <assert.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -57,9 +61,15 @@ static int receive_available(PAacDecoder decoder, FILE* output) {
 
 int main(int argc, char** argv) {
     assert(argc == 6); /* library, fixtures, codec, output, v2|legacy */
+#ifdef _WIN32
+    HMODULE lib = LoadLibraryA(argv[1]);
+    if (!lib) { fprintf(stderr, "LoadLibrary failed: %lu\n", GetLastError()); return 2; }
+#define LOAD(name, symbol) do { *(FARPROC*)(&name) = GetProcAddress(lib, symbol); assert(name); } while (0)
+#else
     void* lib = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     if (!lib) { fprintf(stderr, "%s\n", dlerror()); return 2; }
 #define LOAD(name, symbol) do { *(void**)(&name) = dlsym(lib, symbol); assert(name); } while (0)
+#endif
     LOAD(open_aac, "Decoder_OpenAac"); LOAD(open_ec3, "Decoder_OpenEC3");
     LOAD(close_decoder, "Decoder_Close");
     const int legacy = strcmp(argv[5], "legacy") == 0;
@@ -140,5 +150,10 @@ int main(int argc, char** argv) {
     fclose(output); assert(close_decoder(decoder) == 0);
     printf("{\"codec\":\"%s\",\"legacy\":%s,\"packets\":%d,\"samplesPerChannel\":%ld,\"pcmFrames\":%ld,\"receiveFirst\":%d,\"finalState\":%d}\n",
         argv[3], legacy ? "true" : "false", packets, total_samples, pcm_frames, receive_first, final_state);
-    dlclose(lib); return 0;
+#ifdef _WIN32
+    FreeLibrary(lib);
+#else
+    dlclose(lib);
+#endif
+    return 0;
 }

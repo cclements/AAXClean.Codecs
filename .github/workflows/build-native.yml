@@ -1,26 +1,36 @@
 name: build-native
 
 on:
+  workflow_dispatch:
   push:
     branches: [master]
     paths:
-      - src/AAXCleanNative/AAXCleanNative.h
-      - src/AAXCleanNative/AacEncoder.c
-      - src/AAXCleanNative/AacDecoder.c
-      - .github/workflows/build-linux.yml
-      - .github/workflows/build-mac.yml
-      - .github/workflows/build-win.yml
-      - .github/workflows/build-native.yml
- 
+      - 'src/AAXCleanNative/**'
+      - '.github/workflows/build-native.yml'
+      - '.github/workflows/build-linux.yml'
+      - '.github/workflows/build-mac.yml'
+      - '.github/workflows/build-win.yml'
+      - 'tools/packaging/preflight.py'
+
+permissions:
+  contents: read
+
 jobs:
+  receipt-contracts:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check fail-closed receipt contracts
+        run: |
+          python3 -m unittest discover -s src/AAXCleanNative/tests -p 'test_*.py' -v
+          python3 -m unittest discover -s tools/packaging -p 'test_*.py' -v
   build-native-linux:
-    if: true
     strategy:
       matrix:
         architecture: [x64, arm64]
         include:
           - architecture: x64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - architecture: arm64
             runner: ubuntu-24.04-arm
     uses: ./.github/workflows/build-linux.yml
@@ -29,7 +39,6 @@ jobs:
       architecture: ${{ matrix.architecture }}
       
   build-native-mac:
-    if: true
     strategy:
       matrix:
         architecture: [x64, arm64]
@@ -42,17 +51,15 @@ jobs:
     with:
       runner: ${{ matrix.runner }}
       architecture: ${{ matrix.architecture }}
-      ffmpeg-version: 8.0.1
       
   build-native-win:
-    if: true
     strategy:
       matrix:
         architecture: [x64, arm64]
         include:
           - architecture: x64
             msystem: MINGW64
-            runner: windows-latest
+            runner: windows-2025
           - architecture: arm64
             msystem: CLANGARM64
             runner: windows-11-arm
@@ -61,4 +68,3 @@ jobs:
       runner: ${{ matrix.runner }}
       msystem: ${{ matrix.msystem }}
       architecture: ${{ matrix.architecture }}
-      ffmpeg-version: 8.0.1

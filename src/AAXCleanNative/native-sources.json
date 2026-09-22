@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "purpose": "Pinned inputs for isolated osx-arm64 development/sanitizer builds; not provenance of the six tracked runtime payloads.",
+  "purpose": "Pinned inputs for matching-host development builds across the six native RIDs; not provenance of the six tracked runtime payloads.",
   "sources": [
     {
       "name": "librempeg",

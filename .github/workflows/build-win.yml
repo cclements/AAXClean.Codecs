@@ -1,86 +1,54 @@
+# Pinned development verification. NONFREE binaries are never uploaded.
 on:
   workflow_call:
     inputs:
       architecture:
         type: string
-        description: "CPU architecture targeted by the build."
         required: true
       runner:
-        type: string
-        required: true
-      ffmpeg-version:
         type: string
         required: true
       msystem:
         type: string
         required: true
-  
+
+permissions:
+  contents: read
+
 jobs:
   build:
-    name: "Windows-${{ inputs.architecture }}"
+    name: "win-${{ inputs.architecture }} pinned native checks"
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
     defaults:
       run:
         shell: msys2 {0}
     steps:
-    
+      - uses: actions/checkout@v6
       - uses: msys2/setup-msys2@v2
         with:
           msystem: ${{ inputs.msystem }}
-          install: >-
-            unzip
-            perl
+          install: make
           pacboy: >-
-            gcc:p
-            nasm:p
-            autotools:p
-            lame:p
-            fdk-aac:p
-        
-      - uses: actions/checkout@v6
-      
-      - name: Build Librempeg 
-        id: librempeg 
-        working-directory: ./src
-        run: |
-          LIBREMPEG_MAIN="$(pwd)/librempeg"
-          echo $LIBREMPEG_MAIN
-          curl -k -o librempeg.tar.gz -L0 "https://github.com/librempeg/librempeg/archive/refs/heads/master.tar.gz"
-          echo "Extracting librempeg.tar.gz"
-          mkdir librempeg
-          tar -xf librempeg.tar.gz --directory librempeg --strip-components=1
-          rm librempeg.tar.gz
-          echo "Building librempeg"
-          cd $LIBREMPEG_MAIN
-          ./configure --disable-swscale --disable-avdevice --disable-doc --disable-v4l2-m2m --disable-vaapi --disable-vdpau --disable-network --disable-libxcb --disable-libxcb-xfixes --disable-libxcb-shape --disable-zlib --disable-iconv --disable-alsa --disable-shared --enable-static --disable-doc --disable-symver --disable-programs --disable-debug --enable-pic --disable-everything --enable-decoder=pcm_f32le --enable-decoder=pcm_s16le --enable-encoder=pcm_f32le --enable-encoder=pcm_s16le --enable-demuxer=pcm_f32le --enable-demuxer=pcm_s16le --enable-muxer=pcm_f32le --enable-muxer=pcm_s16le --enable-filter=aresample --enable-filter=asetnsamples --enable-libfdk_aac --enable-nonfree --enable-decoder=libfdk_aac --enable-encoder=libfdk_aac --enable-decoder=eac3 --enable-libmp3lame --enable-encoder=libmp3lame --disable-pthreads --disable-w32threads --enable-decoder=ac4
-          make -j $(nproc)
-          echo "LIBREMPEG_MAIN=${LIBREMPEG_MAIN}" >> "${GITHUB_OUTPUT}"
-
-      - name: Build libAAXCleanNative
-        working-directory: ./src
-        run: |
-          DEST_DIR=runtimes/win-${{ inputs.architecture }}/native
-          mkdir -p $DEST_DIR
-          LIBREMPEG_MAIN=${{ steps.librempeg.outputs.LIBREMPEG_MAIN }}
-          cd AAXCleanNative
-          
-          gcc -v -static -fPIC -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -c AacDecoder.c -c AacEncoder.c -I$LIBREMPEG_MAIN
-          gcc -shared -static -fPIC -o aaxcleannative.dll AacEncoder.o AacDecoder.o -L$LIBREMPEG_MAIN/libavutil -L$LIBREMPEG_MAIN/libswscale -L$LIBREMPEG_MAIN/libswresample -L$LIBREMPEG_MAIN/libavcodec -L$LIBREMPEG_MAIN/libavformat -L$LIBREMPEG_MAIN/libavfilter -L$LIBREMPEG_MAIN/libavdevice -lavfilter -lswresample -lavformat -lavcodec -lavutil -lfdk-aac -lmp3lame -lbcrypt
-          
-          mv aaxcleannative.dll ../$DEST_DIR/
-
-      - name: Bundle Artifacts
-        id: bundle
-        working-directory: ./src
-        run: |
-          ARTIFACT=native_win-${{ inputs.architecture }}.tar.gz
-          tar -cz -f $ARTIFACT runtimes
-          echo "artifact=${ARTIFACT}" >> "${GITHUB_OUTPUT}"
-        
-      - name: Upload library
+            toolchain:p
+            cmake:p
+            python:p
+      - name: Build pinned sources
+        run: bash src/AAXCleanNative/build-native.sh artifacts/native release win-${{ inputs.architecture }}
+      - name: Execute matching-host drain and error checks
+        run: python3 src/AAXCleanNative/native-receipt.py verify --source src/AAXCleanNative --build artifacts/native/release --rid win-${{ inputs.architecture }}
+      - name: Upload verification records only
+        if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ steps.bundle.outputs.artifact }}
-          path: ./src/${{ steps.bundle.outputs.artifact }}
-          if-no-files-found: error
+          name: native-records-win-${{ inputs.architecture }}
+          path: |
+            artifacts/native/release/build-receipt.json
+            artifacts/native/release/native-verification.json
+            artifacts/native/release/toolchain.txt
+            artifacts/native/release/exports.txt
+            artifacts/native/release/linked-libraries.txt
+            artifacts/native/release/build.log
+            artifacts/native/release/verify-*.log
+          if-no-files-found: warn
           retention-days: 7

@@ -1,112 +1,45 @@
+# Pinned development verification. NONFREE binaries are never uploaded.
 on:
   workflow_call:
     inputs:
       architecture:
         type: string
-        description: "CPU architecture targeted by the build."
         required: true
       runner:
         type: string
         required: true
-      ffmpeg-version:
-        type: string
-        required: true
-env:
-  LAME_VER: "3.100"
-  
+
+permissions:
+  contents: read
+
 jobs:
   build:
-    name: "macOS-${{ inputs.architecture }}"
+    name: "osx-${{ inputs.architecture }} pinned native checks"
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
     steps:
-    
-      - name: Install Dependencies
-        run: brew install automake yasm nasm libtool
-        
       - uses: actions/checkout@v6
-      
-      - name: Build LAME
-        working-directory: ./src
-        run: |
-          ARCH=${{ inputs.architecture }}
-          if [ $ARCH = "arm64" ]; then
-            LAME_ARCH=arm
-          elif [ $ARCH = "x64" ]; then
-            LAME_ARCH="x86_64"
-          else
-            LAME_ARCH=$ARCH
-          fi
-          LAME_NAME="lame-${{ env.LAME_VER }}"
-          curl -k -o $LAME_NAME.tar.gz -L0 $URL "https://cfhcable.dl.sourceforge.net/project/lame/lame/${{ env.LAME_VER }}/$LAME_NAME.tar.gz"
-          echo "Extracting $LAME_NAME.tar.gz"
-          tar -xf ./$LAME_NAME.tar.gz
-          rm $LAME_NAME.tar.gz
-          cd $LAME_NAME
-          ./configure --disable-decoder --disable-frontend --host="$LAME_ARCH" --prefix=$HOME/local
-          make -j$(sysctl -n hw.physicalcpu) CFLAGS='-fPIC -O3' CPPFLAGS="-DNDEBUG"
-          make install
-          
-      - name: Build LibFDK
-        working-directory: ./src
-        run: |
-          FDK_NAME=fdk-aac-master
-          curl -k -o $FDK_NAME.zip -L0 $URL "https://github.com/mstorsjo/fdk-aac/archive/refs/heads/master.zip"
-          echo "Extracting $FDK_NAME.zip"
-          unzip -q -o ./$FDK_NAME.zip
-          rm $FDK_NAME.zip
-          echo "Building $FDK_NAME"
-          cd $FDK_NAME
-          ./autogen.sh
-          ./configure --enable-shared=no --enable-static=yes --prefix=$HOME/local
-          make -j$(sysctl -n hw.physicalcpu) CFLAGS="-g0 -fPIC -O2 -Werror -Wno-deprecated-declarations" CXXFLAGS="-g0 -fPIC -O2 -Werror -Wno-deprecated-declarations"
-          make install
-          
-      - name: Build Librempeg
-        id: librempeg
-        working-directory: ./src
-        run: |
-          LIBREMPEG_MAIN="$(pwd)/librempeg"
-          echo $LIBREMPEG_MAIN
-          curl -k -o librempeg.tar.gz -L0 "https://github.com/librempeg/librempeg/archive/refs/heads/master.tar.gz"
-          echo "Extracting librempeg.tar.gz"
-          mkdir librempeg
-          tar -xf librempeg.tar.gz --directory librempeg --strip-components=1
-          rm librempeg.tar.gz
-          echo "Building librempeg"
-          cd $LIBREMPEG_MAIN
-          export PKG_CONFIG_PATH=$HOME/local/lib/pkgconfig
-          ./configure --extra-ldflags="-L$HOME/local/lib" --prefix=$HOME/local --disable-swscale --disable-avdevice --disable-doc --disable-v4l2-m2m --disable-vaapi --disable-vdpau --disable-network --disable-libxcb --disable-libxcb-xfixes --disable-libxcb-shape --disable-zlib --disable-iconv --disable-alsa --disable-shared --enable-static --disable-doc --disable-symver --disable-programs --disable-debug --enable-pic --disable-everything --enable-decoder=pcm_f32le --enable-decoder=pcm_s16le --enable-encoder=pcm_f32le --enable-encoder=pcm_s16le --enable-demuxer=pcm_f32le --enable-demuxer=pcm_s16le --enable-muxer=pcm_f32le --enable-muxer=pcm_s16le --enable-filter=aresample --enable-filter=asetnsamples --enable-libfdk_aac --enable-nonfree --enable-decoder=libfdk_aac --enable-encoder=libfdk_aac --enable-decoder=eac3 --enable-libmp3lame --enable-encoder=libmp3lame --disable-pthreads --enable-decoder=ac4
-          make -j$(sysctl -n hw.physicalcpu)
-          make install
-          echo "LIBREMPEG_MAIN=${LIBREMPEG_MAIN}" >> "${GITHUB_OUTPUT}"
-
-      - name: Build libAAXCleanNative
-        working-directory: ./src
-        run: |
-          DEST_DIR=runtimes/osx-${{ inputs.architecture }}/native
-          mkdir -p $DEST_DIR
-          LIBREMPEG_MAIN=${{ steps.librempeg.outputs.LIBREMPEG_MAIN }}
-          cd AAXCleanNative
-          export CPATH="${CPATH}:$LIBREMPEG_MAIN:$HOME/local/include"
-          export LIBRARY_PATH="${LIBRARY_PATH}:$HOME/local/lib"
-          
-          gcc -fPIC -v -c AacDecoder.c -c AacEncoder.c
-          gcc -dynamiclib -shared -static -fPIC -Wl,-v -o libaaxcleannative.dylib AacEncoder.o AacDecoder.o -lc -lavfilter -lswresample -lavformat -lavcodec -lavutil -lfdk-aac -lmp3lame -lm -framework VideoToolbox -framework CoreFoundation -framework CoreMedia -framework CoreVideo -framework CoreServices
-          
-          mv libaaxcleannative.dylib ../$DEST_DIR/
-      
-      - name: Bundle Artifacts
-        id: bundle
-        working-directory: ./src
-        run: |
-          ARTIFACT=native_osx-${{ inputs.architecture }}.tar.gz
-          tar -cz -f $ARTIFACT runtimes
-          echo "artifact=${ARTIFACT}" >> "${GITHUB_OUTPUT}"
-        
-      - name: Upload library
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build tools
+        run: brew install cmake
+      - name: Build pinned sources
+        run: bash src/AAXCleanNative/build-native.sh artifacts/native release osx-${{ inputs.architecture }}
+      - name: Execute matching-host drain and error checks
+        run: python3 src/AAXCleanNative/native-receipt.py verify --source src/AAXCleanNative --build artifacts/native/release --rid osx-${{ inputs.architecture }}
+      - name: Upload verification records only
+        if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ steps.bundle.outputs.artifact }}
-          path: ./src/${{ steps.bundle.outputs.artifact }}
-          if-no-files-found: error
+          name: native-records-osx-${{ inputs.architecture }}
+          path: |
+            artifacts/native/release/build-receipt.json
+            artifacts/native/release/native-verification.json
+            artifacts/native/release/toolchain.txt
+            artifacts/native/release/exports.txt
+            artifacts/native/release/linked-libraries.txt
+            artifacts/native/release/build.log
+            artifacts/native/release/verify-*.log
+          if-no-files-found: warn
           retention-days: 7
