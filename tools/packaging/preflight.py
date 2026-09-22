@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 RIDS = {'linux-arm64', 'linux-x64', 'osx-arm64', 'osx-x64', 'win-arm64', 'win-x64'}
-EXPORTS = {'Decoder_GetApiVersion', 'Decoder_SubmitPacket', 'Decoder_ReceivePcm'}
+EXPORTS = {'Decoder_GetApiVersion', 'Decoder_SubmitPacket', 'Decoder_ReceivePcm', 'AacEncoder_GetTiming'}
 
 
 def require(condition, message):
@@ -129,6 +129,7 @@ def validate(root, manifest, nuspec, version, archive=None):
         require(receipt['api_version'] == 2 and EXPORTS <= set(receipt['exports']), 'missing v2 exports/version')
         require(receipt['execution_host_rid'] == rid and receipt['drain_pass'] is True and
                 receipt['error_pass'] is True, 'missing matching RID drain/error execution')
+        require(receipt.get('encoder_timing_pass') is True, 'missing matching RID encoder timing execution')
         for field in ('source', 'dependencies', 'configuration', 'toolchain'):
             require(isinstance(receipt[field], str) and receipt[field].strip(), 'missing provenance: ' + field)
         read_artifact(root, receipt['execution_log'])

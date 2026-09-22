@@ -118,6 +118,10 @@ EXPORT PVOID AacEncoder_Open(PAacEncoderOptions encoder_options);
 
 EXPORT int32_t AacEncoder_GetExtraData(PAacEncoder config, uint8_t* ascBuffer, int32_t* pSize);
 
+/** Return the opened encoder's frame size and initial decoder delay, in samples
+ * per channel. These are codec values, not inferred from emitted packet counts.
+ * Both output pointers are required; errors leave both outputs unchanged. */
+EXPORT int32_t AacEncoder_GetTiming(PAacEncoder config, int32_t* frame_size, int32_t* initial_padding);
 
 
 EXPORT int32_t AacEncoder_Close(PAacEncoder config);

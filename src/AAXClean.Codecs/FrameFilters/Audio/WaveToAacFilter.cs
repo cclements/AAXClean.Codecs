@@ -47,7 +47,9 @@ namespace AAXClean.Codecs.FrameFilters.Audio
 		{
 			foreach (var flushedFrame in aacEncoder.EncodeFlush())
 			{
-				Mp4aWriter.AddFrame(flushedFrame.FrameData.Span, newChunk: false, flushedFrame.SamplesInFrame);
+				// Short inputs may produce their first packet only during flush.
+				Mp4aWriter.AddFrame(flushedFrame.FrameData.Span, FramesInCurrentChunk++ == 0, flushedFrame.SamplesInFrame);
+				FramesInCurrentChunk %= FRAMES_PER_CHUNK;
 			}
 
 			Mp4aWriter.SetEditList(aacEncoder.PresentationStartSamples, aacEncoder.AcceptedPcmSamples);

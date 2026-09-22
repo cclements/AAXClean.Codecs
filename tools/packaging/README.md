@@ -27,8 +27,8 @@ The test fixture builder in `test_preflight.py` is an executable schema example;
 its synthetic bytes/receipts are not platform evidence.
 
 A native receipt binds `rid`, `native_sha256`, the complete `managed` target/hash
-map, and `parser_sha256`. It records `api_version: 2`, the three v2 `exports`,
-`execution_host_rid`, `drain_pass: true`, `error_pass: true`, and nonempty identity
+map, and `parser_sha256`. It records `api_version: 2`, the three decoder v2 `exports` plus `AacEncoder_GetTiming`,
+`execution_host_rid`, `drain_pass: true`, `error_pass: true`, `encoder_timing_pass: true`, and nonempty identity
 strings for `source`, `dependencies`, `configuration`, and `toolchain`. Use exact
 commits/hashes and build flags in those strings. `execution_log` is a path/hash
 record for retained matching-host execution and export inspection. Shipping
@@ -40,7 +40,7 @@ checks their consistency and artifact hashes; it cannot establish that arbitrary
 receipt prose is true. It inspects executable architecture directly, but does
 not load foreign binaries or mistake a symbol string for a real export/runtime
 check. The matching-RID producer must inspect exports and execute version,
-drain and failure consumers before issuing a receipt. Provenance signing and
+drain, failure and encoder-timing consumers before issuing a receipt. Provenance signing and
 remote attestation collection are outside this bounded gate.
 
 Shipping requires all six existing RIDs, each exactly once. Local requires one

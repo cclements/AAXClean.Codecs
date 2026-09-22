@@ -44,7 +44,9 @@ namespace AAXClean.Codecs.FrameFilters.Audio
 
 			foreach (var flushedFrame in aacEncoder.EncodeFlush())
 			{
-				mp4writer?.AddFrame(flushedFrame.FrameData.Span, newChunk: false, flushedFrame.SamplesInFrame);
+				// A short chapter can buffer all of its packets until flush.
+				mp4writer?.AddFrame(flushedFrame.FrameData.Span, framesInCurrentChunk++ == 0, flushedFrame.SamplesInFrame);
+				framesInCurrentChunk %= FRAMES_PER_CHUNK;
 			}
 			mp4writer?.SetEditList(aacEncoder.PresentationStartSamples, aacEncoder.AcceptedPcmSamples);
 			mp4writer?.Close();

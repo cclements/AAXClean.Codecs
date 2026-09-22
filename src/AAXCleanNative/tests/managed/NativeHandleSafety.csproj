@@ -6,11 +6,13 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <InteropSourceDirectory Condition="'$(InteropSourceDirectory)' == ''">$(MSBuildThisFileDirectory)../../../AAXClean.Codecs/Interop</InteropSourceDirectory>
+    <EncoderSourceFile Condition="'$(EncoderSourceFile)' == ''">$(MSBuildThisFileDirectory)../../../AAXClean.Codecs/FfmpegAacEncoder.cs</EncoderSourceFile>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="NAudio.Core" Version="2.2.1" />
     <Compile Include="$(InteropSourceDirectory)/NativeDecode.cs;$(InteropSourceDirectory)/NativeAacDecode.cs;$(InteropSourceDirectory)/NativeEc3Decode.cs;$(InteropSourceDirectory)/NativeAc4Decode.cs;$(InteropSourceDirectory)/NativeAacEncode.cs" Link="Interop/%(Filename)%(Extension)" />
     <Compile Include="../../../AAXClean.Codecs/FrameFilters/Audio/WaveFormat.cs" Link="Audio/%(Filename)%(Extension)" />
+    <Compile Include="$(EncoderSourceFile);../../../AAXClean.Codecs/FrameFilters/Audio/WaveEntry.cs" Link="Encoder/%(Filename)%(Extension)" />
     <ProjectReference Include="../../../../../AAXClean/src/AAXClean/AAXClean.csproj" />
   </ItemGroup>
 </Project>

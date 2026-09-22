@@ -10,7 +10,7 @@
 #include <unistd.h>
 
 static int failure, wrapper_allocs, wrapper_frees, contexts, frames, packets;
-static int decoder_closes, encoder_closes, send_calls, check_extra, check_packet;
+static int decoder_closes, encoder_closes, send_calls, check_extra, check_packet, timing_mode;
 static const uint8_t *borrowed;
 static AVPacket *retained;
 static void *checked_malloc(size_t size);
@@ -47,6 +47,7 @@ int32_t encoder_close_impl(PAacEncoder encoder);
 #define avcodec_send_packet checked_send
 #define Decoder_Close decoder_close_impl
 #define AacEncoder_Close encoder_close_impl
+#define AacEncoder_GetTiming encoder_timing_impl
 #ifndef DECODER_SOURCE
 #define DECODER_SOURCE "../AacDecoder.c"
 #endif
@@ -69,6 +70,7 @@ int32_t encoder_close_impl(PAacEncoder encoder);
 #undef avcodec_send_packet
 #undef Decoder_Close
 #undef AacEncoder_Close
+#undef AacEncoder_GetTiming
 
 static void *checked_malloc(size_t size) {
     if (failure == 1) return NULL;
@@ -145,6 +147,16 @@ EXPORT int32_t AacEncoder_Close(PAacEncoder encoder) {
     if (encoder) encoder_closes++;
     return encoder_close_impl(encoder);
 }
+#ifndef OMIT_ENCODER_TIMING
+EXPORT int32_t AacEncoder_GetTiming(PAacEncoder encoder, int32_t *frame, int32_t *delay) {
+    if (!timing_mode) return encoder_timing_impl(encoder, frame, delay);
+    if (timing_mode == 4) return ERR_AAC_CODEC_OPEN_FAIL;
+    *frame = timing_mode == 2 ? 512 : 1024;
+    *delay = timing_mode == 3 ? -1 : timing_mode == 5 ? INT_MAX : 2112;
+    return 0;
+}
+#endif
+EXPORT void Safety_SetTiming(int value) { timing_mode = value; }
 EXPORT void Safety_SetFailure(int value) { failure = value; }
 EXPORT int Safety_DecoderCloses(void) { return decoder_closes; }
 EXPORT int Safety_EncoderCloses(void) { return encoder_closes; }
@@ -156,7 +168,7 @@ EXPORT int Safety_SizeOfOptions(int kind) {
 EXPORT void Safety_Reset(void) {
     assert(wrapper_allocs == wrapper_frees && !contexts && !frames && !packets && !retained);
     failure = wrapper_allocs = wrapper_frees = decoder_closes = encoder_closes = send_calls = 0;
-    check_extra = check_packet = 0;
+    check_extra = check_packet = timing_mode = 0;
     borrowed = NULL;
 }
 
@@ -304,6 +316,29 @@ static void packet_errors(void) {
     assert((intptr_t)Decoder_OpenAC4(NULL) < 0);
     no_leaks();
 }
+static void encoder_timing(void) {
+    int32_t frame = 123, delay = 456;
+    assert(encoder_timing_impl(NULL, &frame, &delay) == ERR_INVALID_HANDLE);
+    AacEncoder dummy = {0};
+    assert(encoder_timing_impl(&dummy, &frame, &delay) == ERR_INVALID_HANDLE);
+    AacEncoderOptions options = { 128000, 0, 44100, 2, AV_SAMPLE_FMT_S16 };
+    PAacEncoder encoder = AacEncoder_Open(&options);
+    assert((intptr_t)encoder > 0);
+    assert(encoder_timing_impl(encoder, NULL, &delay) == ERR_BUFF_HANDLE_INVALID);
+    assert(encoder_timing_impl(encoder, &frame, NULL) == ERR_BUFF_HANDLE_INVALID);
+    assert(frame == 123 && delay == 456);
+    assert(encoder_timing_impl(encoder, &frame, &delay) == 0);
+    assert(frame == 1024 && delay == encoder->context->initial_padding && delay > 0);
+    printf("encoder frame=%d initial-padding=%d\n", frame, delay);
+    encoder->context->initial_padding = -1;
+    assert(encoder_timing_impl(encoder, &frame, &delay) < 0);
+    assert(frame == 1024 && delay > 0);
+    encoder->context->initial_padding = 0;
+    encoder->context->frame_size = 512;
+    assert(encoder_timing_impl(encoder, &frame, &delay) < 0);
+    AacEncoder_Close(encoder);
+    no_leaks();
+}
 static void abi(void) {
     assert(sizeof(OutputOptions) == 12);
     assert(sizeof(AacDecoderOptions) == 24 && offsetof(AacDecoderOptions, ASC) == 16);
@@ -319,6 +354,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "malformed-packets")) malformed_packets();
     else if (!strcmp(argv[1], "packet-errors")) packet_errors();
     else if (!strcmp(argv[1], "abi")) abi();
+    else if (!strcmp(argv[1], "encoder-timing")) encoder_timing();
     else return 2;
     printf("PASS %s\n", argv[1]);
     return 0;

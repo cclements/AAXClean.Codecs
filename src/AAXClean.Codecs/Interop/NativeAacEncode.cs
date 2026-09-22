@@ -1,5 +1,6 @@
 ﻿using AAXClean.Codecs.FrameFilters.Audio;
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace AAXClean.Codecs.Interop;
@@ -10,6 +11,8 @@ internal unsafe class NativeAacEncode : IDisposable
 	//Factor for converting quality to global_quality
 	private const int FF_QP2LAMBDA = 118;
 	private EncoderHandle Handle { get; } = new();
+	public int FrameSize { get; }
+	public int InitialPadding { get; }
 
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
 	private static extern IntPtr AacEncoder_Open(ref AacEncoderOptions options);
@@ -26,6 +29,9 @@ internal unsafe class NativeAacEncode : IDisposable
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
 	private static extern int AacEncoder_GetExtraData(EncoderHandle self, byte* ascBuffer, int* pSize);
 
+	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
+	private static extern int AacEncoder_GetTiming(EncoderHandle self, out int frameSize, out int initialPadding);
+
 	public NativeAacEncode(WaveFormat waveFormat, long bitRate, double quality)
 	{
 		AacEncoderOptions options = new()
@@ -37,6 +43,25 @@ internal unsafe class NativeAacEncode : IDisposable
 			sample_fmt = (int)waveFormat.Encoding
 		};
 		Handle.Initialize(AacEncoder_Open(ref options));
+		try
+		{
+			int result = AacEncoder_GetTiming(Handle, out int frameSize, out int initialPadding);
+			if (result != 0 || frameSize != 1024 || initialPadding < 0)
+				throw new InvalidDataException("Native AAC encoder returned unsupported frame size or delay.");
+			FrameSize = frameSize;
+			InitialPadding = initialPadding;
+		}
+		catch (EntryPointNotFoundException error)
+		{
+			Handle.Dispose();
+			throw new PlatformNotSupportedException(
+				"AAC encoding requires a matched native payload with AacEncoder_GetTiming.", error);
+		}
+		catch
+		{
+			Handle.Dispose();
+			throw;
+		}
 	}
 
 	public int EncodeFrame(byte* pWaveAudio1, byte* pWaveAudio2, int nbSamples)

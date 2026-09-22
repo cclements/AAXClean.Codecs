@@ -9,7 +9,6 @@ namespace AAXClean.Codecs;
 
 internal unsafe sealed class FfmpegAacEncoder : IDisposable
 {
-	internal const string libname = FfmpegAacDecoder.libname;
 	public WaveFormat WaveFormat { get; }
 	private readonly NativeAacEncode AacEncoder;
 	private const int AAC_SAMPLES_PER_FRAME = 1024;
@@ -17,7 +16,7 @@ internal unsafe sealed class FfmpegAacEncoder : IDisposable
 	public long AcceptedPcmSamples { get; private set; }
 	public long PaddedPcmSamples { get; private set; }
 	public long EncodedMediaSamples { get; private set; }
-	public long PresentationStartSamples { get; private set; }
+	public long PresentationStartSamples => AacEncoder.InitialPadding;
 	public byte[] GetAudioSpecificConfig() => AacEncoder.GetAudioSpecificConfig();
 
 	public FfmpegAacEncoder(WaveFormat inputWaveFormat, long? bitRate, double? quality)
@@ -98,24 +97,10 @@ internal unsafe sealed class FfmpegAacEncoder : IDisposable
 		foreach (var encodedFrame in DrainAvailableFrames(null))
 			yield return encodedFrame;
 
-		if (EncodedMediaSamples < PaddedPcmSamples)
-			throw new InvalidDataException("AAC encoder emitted less media than the padded PCM it accepted.");
-
-		//Observable priming: media emitted beyond the padded input is the encoder's
-		//initial delay. That equals true priming only when the delay is a whole number
-		//of AAC frames: the input is zero-completed to a frame boundary, so a
-		//fractional-frame delay would be absorbed into the final frame and this
-		//derivation would overstate priming by the complement of the fraction. The
-		//pinned ffmpeg aac encoder primes exactly one 1,024-sample frame. If the native
-		//payload ever swaps encoders (libfdk, for example, primes 2,624 samples), the
-		//priming derivation must be re-verified against the new encoder before release.
-		PresentationStartSamples = EncodedMediaSamples - PaddedPcmSamples;
-
-		if (PresentationStartSamples % AAC_SAMPLES_PER_FRAME != 0)
-			throw new InvalidDataException(
-				$"Derived encoder priming {PresentationStartSamples} is not a whole number of "
-				+ $"{AAC_SAMPLES_PER_FRAME}-sample AAC frames; this encoder is not supported by "
-				+ "the priming derivation.");
+		// Initial codec delay and packet-rounding tail padding are independent.
+		// The native encoder reports the former; the edit list excludes the latter.
+		if (EncodedMediaSamples < checked(PresentationStartSamples + AcceptedPcmSamples))
+			throw new InvalidDataException("AAC encoder emitted insufficient media for its reported delay and accepted PCM.");
 	}
 
 	private IEnumerable<FrameEntry> DrainAvailableFrames(FrameEntry? input)

@@ -1,5 +1,17 @@
 #include "AAXCleanNative.h"
 
+int32_t AacEncoder_GetTiming(PAacEncoder config, int32_t* frame_size, int32_t* initial_padding) {
+    if (!config || !config->context)
+        return ERR_INVALID_HANDLE;
+    if (!frame_size || !initial_padding)
+        return ERR_BUFF_HANDLE_INVALID;
+    if (config->context->frame_size != AAC_FRAME_SIZE || config->context->initial_padding < 0)
+        return ERR_AAC_CODEC_OPEN_FAIL;
+    *frame_size = config->context->frame_size;
+    *initial_padding = config->context->initial_padding;
+    return ERR_SUCCESS;
+}
+
 int32_t AacEncoder_EncodeFlush(PAacEncoder config) {
 
     int32_t ret;
@@ -197,6 +209,12 @@ PVOID AacEncoder_Open(PAacEncoderOptions encoder_options) {
     ret = avcodec_open2(penc->context, codec, NULL);
     if (ret < 0)
         goto failed;
+
+    // The buffering ABI currently supports only AAC-LC's 1,024-sample frames.
+    if (penc->context->frame_size != AAC_FRAME_SIZE || penc->context->initial_padding < 0) {
+        ret = ERR_AAC_CODEC_OPEN_FAIL;
+        goto failed;
+    }
 
     penc->packet = av_packet_alloc();
     if (!penc->packet) {

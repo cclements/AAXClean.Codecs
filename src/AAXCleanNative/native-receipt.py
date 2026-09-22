@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 RIDS = {'osx-arm64', 'osx-x64', 'linux-arm64', 'linux-x64', 'win-arm64', 'win-x64'}
-EXPORTS = ('Decoder_GetApiVersion', 'Decoder_SubmitPacket', 'Decoder_ReceivePcm')
+EXPORTS = ('Decoder_GetApiVersion', 'Decoder_SubmitPacket', 'Decoder_ReceivePcm', 'AacEncoder_GetTiming')
 
 
 def require(condition, message):
@@ -60,12 +60,12 @@ def record_build(source, build, rid, mode):
     manifest = json.loads((source / 'native-sources.json').read_text())
     source_paths = ['AAXCleanNative.h', 'AacDecoder.c', 'AacEncoder.c', 'build-native.sh',
                     'prepare-native-sources.py', 'native-sources.json', 'native-receipt.py',
-                    'tests/drain-tests.c', 'tests/drain-format-tests.c']
+                    'tests/drain-tests.c', 'tests/drain-format-tests.c', 'tests/encoder-timing-tests.c']
     paths = [native, build / 'toolchain.txt', build / 'exports.txt', build / 'linked-libraries.txt',
              build / 'librempeg/config.h', build / 'librempeg/ffbuild/config.mak',
-             build / 'drain-tests', build / 'drain-format-tests']
+             build / 'drain-tests', build / 'drain-format-tests', build / 'encoder-timing-tests']
     if rid.startswith('win-'):
-        paths[-2:] = [build / 'drain-tests.exe', build / 'drain-format-tests.exe']
+        paths[-3:] = [build / (name + '.exe') for name in ('drain-tests', 'drain-format-tests', 'encoder-timing-tests')]
     libraries = sorted((build / 'prefix/lib').glob('*.a'))
     require(len(libraries) >= 6, 'missing pinned static libraries')
     paths += libraries
@@ -130,6 +130,8 @@ def verify(source, build, rid, fixtures):
     text = run('format-changes', [build / ('drain-format-tests' + suffix)])
     require('PASS: rate, sample format and layout changes fail terminally before conversion' in text,
             'missing rate/format/layout witness')
+    text = run('encoder-timing', [build / ('encoder-timing-tests' + suffix), native])
+    require('PASS: 10 encoder timing/coverage cases and invalid-argument checks' in text, 'missing encoder timing witness')
     # Ensure a test process did not replace the candidate or its configuration.
     checked_hashes(source, receipt['source_files'])
     checked_hashes(build, receipt['files'])
@@ -137,12 +139,12 @@ def verify(source, build, rid, fixtures):
              'exports': list(EXPORTS), 'native_sha256': digest(native),
              'build_receipt_sha256': digest(build / 'build-receipt.json'),
              'fixture_manifest_sha256': digest(fixtures / 'manifest.json'),
-             'drain_pass': True, 'error_pass': True, 'results': results, 'execution_logs': logs,
+             'drain_pass': True, 'error_pass': True, 'encoder_timing_pass': True, 'results': results, 'execution_logs': logs,
              'distribution': 'NONFREE/UNREDISTRIBUTABLE',
              'package_admission': 'NOT ADMITTED: no managed/parser package-pair execution receipt',
              'limits': 'AAC-LC and E-AC-3 synthetic counts; no real AC-4/HE-AAC/xHE-AAC, alignment, managed runtime or distribution proof'}
     write_json(output, value)
-    print(f'{rid}: three native drain cases and two terminal-error suites passed')
+    print(f'{rid}: three native drain cases, two terminal-error suites and encoder timing passed')
 
 
 def main():

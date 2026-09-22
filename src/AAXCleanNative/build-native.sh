@@ -138,6 +138,8 @@ LIBS+=(-lm)
 # shellcheck disable=SC2086
 "$CC" $CFLAGS -I"$PREFIX/include" "$NATIVE_SOURCE/tests/drain-tests.c" ${TEST_LINK_OPTIONS[@]+"${TEST_LINK_OPTIONS[@]}"} -o "$BUILD/drain-tests"
 # shellcheck disable=SC2086
+"$CC" $CFLAGS -I"$PREFIX/include" "$NATIVE_SOURCE/tests/encoder-timing-tests.c" ${TEST_LINK_OPTIONS[@]+"${TEST_LINK_OPTIONS[@]}"} -o "$BUILD/encoder-timing-tests"
+# shellcheck disable=SC2086
 "$CC" $CFLAGS -I"$PREFIX/include" "$NATIVE_SOURCE/tests/drain-format-tests.c" "${LIBS[@]}" -o "$BUILD/drain-format-tests"
 set +x
 case "$PLATFORM" in

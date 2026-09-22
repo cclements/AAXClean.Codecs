@@ -1,4 +1,5 @@
 using AAXClean;
+using AAXClean.Codecs;
 using AAXClean.Codecs.FrameFilters.Audio;
 using AAXClean.Codecs.Interop;
 using Mpeg4Lib.Boxes;
@@ -9,6 +10,7 @@ using System.Runtime.InteropServices;
 internal static class Program
 {
     private const string ProbeLibrary = "native-safety";
+    [DllImport(ProbeLibrary)] private static extern void Safety_SetTiming(int mode);
     [DllImport(ProbeLibrary)] private static extern void Safety_SetFailure(int failure);
     [DllImport(ProbeLibrary)] private static extern void Safety_Reset();
     [DllImport(ProbeLibrary)] private static extern int Safety_DecoderCloses();
@@ -69,6 +71,16 @@ internal static class Program
             (name, _, _) => name is "aaxcleannative" or ProbeLibrary ? native : IntPtr.Zero);
         if (args.Length == 2)
         {
+            if (args[1] == "missing-timing")
+            {
+                Safety_Reset();
+                try { using var unexpected = Create(3); throw new Exception("old ABI accepted"); }
+                catch (PlatformNotSupportedException) { }
+                Require(Safety_EncoderCloses() == 1 && Safety_LiveWrappers() == 0 && Safety_LiveResources() == 0,
+                    "missing timing export must close the successfully opened handle exactly once");
+                Pass("missing timing export rejected and handle released");
+                return;
+            }
             Require(args[1] == "smoke", "unknown mode");
             RuntimeSmoke();
             return;
@@ -118,8 +130,41 @@ internal static class Program
             Require(Safety_LiveWrappers() == 0 && Safety_LiveResources() == 0, "finalization resource balance");
             Pass($"abandoned-finalization kind={kind}");
         }
-        Require(tests == 34, $"expected 34 cases, observed {tests}");
-        Console.WriteLine($"PASS managed native safety: {tests}/34 cases");
+        Safety_Reset();
+        using (var encoder = new NativeAacEncode(Format, 128000, 0))
+            Require(encoder.FrameSize == 1024 && encoder.InitialPadding > 0, "actual encoder timing");
+        Pass("opened encoder timing");
+        Safety_Reset();
+        Safety_SetTiming(1); // Synthetic fractional-frame delay distinguishes timing from packet counts.
+        using (var encoder = new FfmpegAacEncoder(Format, 128000, null))
+        {
+            _ = encoder.EncodeWave(new WaveEntry { SamplesInFrame = 1501, FrameData = new byte[1501 * Format.BlockAlign] }).ToArray();
+            _ = encoder.EncodeFlush().ToArray();
+            Require(encoder.PresentationStartSamples == 2112, "reported fractional delay must survive flush");
+        }
+        Pass("fractional delay is not rounded to a packet boundary");
+        for (int mode = 2; mode <= 4; mode++)
+        {
+            Safety_Reset();
+            Safety_SetTiming(mode);
+            try { using var unexpected = Create(3); throw new Exception("invalid timing accepted"); }
+            catch (InvalidDataException) { }
+            Require(Safety_EncoderCloses() == 1 && Safety_LiveWrappers() == 0 && Safety_LiveResources() == 0,
+                "invalid timing must release the opened handle exactly once");
+            Pass($"invalid timing closes handle mode={mode}");
+        }
+        Safety_Reset();
+        Safety_SetTiming(5);
+        using (var encoder = new FfmpegAacEncoder(Format, 128000, null))
+        {
+            _ = encoder.EncodeWave(new WaveEntry { SamplesInFrame = 1501, FrameData = new byte[1501 * Format.BlockAlign] }).ToArray();
+            try { _ = encoder.EncodeFlush().ToArray(); throw new Exception("insufficient media accepted"); }
+            catch (InvalidDataException) { }
+        }
+        Pass("reported delay requires enough encoded media");
+        Safety_Reset();
+        Require(tests == 40, $"expected 40 cases, observed {tests}");
+        Console.WriteLine($"PASS managed native safety: {tests}/40 cases");
         // Keep the native library loaded until process teardown: SafeHandle release
         // code and the runtime's import cache may outlive this method.
     }

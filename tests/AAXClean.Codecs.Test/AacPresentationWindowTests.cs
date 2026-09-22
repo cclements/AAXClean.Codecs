@@ -1,4 +1,5 @@
 using AAXClean.Codecs.FrameFilters.Audio;
+using AAXClean.Codecs.Interop;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Mpeg4Lib;
 using Mpeg4Lib.Boxes;
@@ -43,14 +44,12 @@ public class AacPresentationWindowTests
 		await filter.CompleteAsync();
 
 		using var converted = new AAXClean.Mp4File(new MemoryStream(output.ToArray()));
-		long encodedMediaSamples = checked((long)converted.Moov.AudioTrack.Mdia.Mdhd.Duration);
-		long paddedInputSamples = RoundUpToAacFrame(AcceptedPcmSamples);
-		long observableEncoderDelay = encodedMediaSamples - paddedInputSamples;
+		using var native = new NativeAacEncode(format, 24_000, 0);
 		ElstBox.EditEntry edit = converted.Moov.AudioTrack.Edts!.Elst!.SingleEdit!.Value;
 
-		Assert.IsGreaterThan(0L, observableEncoderDelay, "The fixture must exercise real encoder priming.");
-		Assert.AreEqual(observableEncoderDelay, edit.MediaTime,
-			"The presentation must begin after the encoder's observable priming samples.");
+		Assert.IsGreaterThan(0, native.InitialPadding, "The fixture must exercise real encoder priming.");
+		Assert.AreEqual((long)native.InitialPadding, edit.MediaTime,
+			"The presentation must begin after the encoder's reported delay.");
 		Assert.AreEqual(AcceptedPcmSamples, converted.PresentedDurationSamples,
 			"Encoder priming and zero-padded tail samples must not extend presentation duration.");
 	}
@@ -207,9 +206,6 @@ public class AacPresentationWindowTests
 		return pcm;
 	}
 
-	private static long RoundUpToAacFrame(long samples)
-		=> checked((samples + AacSamplesPerFrame - 1) / AacSamplesPerFrame * AacSamplesPerFrame);
-
 	private static readonly ChunkEntry TestChunk = new()
 	{
 		TrackId = 1,
@@ -221,7 +217,7 @@ public class AacPresentationWindowTests
 		FrameDurations = [1],
 	};
 
-	private static byte[] CreateSourceMp4()
+	internal static byte[] CreateSourceMp4()
 	{
 		const uint timescale = 16_000;
 		byte[] ftyp = Box("ftyp", Encoding.ASCII.GetBytes("M4A "), UInt32s(0));
