@@ -256,7 +256,8 @@ namespace AAXClean.Codecs
 
 			NAudio.Lame.LameConfig lameConfig = new NAudio.Lame.LameConfig
 			{
-				ABRRateKbps = (int)Math.Round(mp4File.AverageBitrate / 1024d / mp4File.AudioChannels * USAC_Scaler),
+				// LAME expects decimal kbit/s; source metadata is bit/s.
+				ABRRateKbps = (int)Math.Round(mp4File.AverageBitrate / 1000d / mp4File.AudioChannels * USAC_Scaler),
 				Mode = NAudio.Lame.MPEGMode.Mono,
 				VBR = NAudio.Lame.VBRMode.ABR,
 				ID3 = mp4File.MetadataItems.ToIDTags() ?? new(nameof(AAXClean))
