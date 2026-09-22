@@ -25,6 +25,8 @@ internal unsafe sealed class FfmpegAacEncoder : IDisposable
 			throw new ArgumentException("AAC encoder only supports mono or stereo wave formats.", nameof(inputWaveFormat));
 		if (inputWaveFormat.Encoding != NAudio.Wave.WaveFormatEncoding.Pcm)
 			throw new ArgumentException("AAC encoder only supports PCM wave formats.", nameof(inputWaveFormat));
+		if (inputWaveFormat.SampleRate > ushort.MaxValue)
+			throw new NotSupportedException("AAC MP4 output above 65,535 Hz is not supported; select a lower output sample rate.");
 
 		WaveFormat = inputWaveFormat;
 		AacEncoder = new NativeAacEncode(WaveFormat, bitRate ?? 0, quality ?? 0);

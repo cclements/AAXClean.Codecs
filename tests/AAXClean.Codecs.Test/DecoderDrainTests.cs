@@ -289,6 +289,46 @@ public class DecoderDrainTests
         Assert.IsEmpty(native.Submitted);
     }
 
+    [TestMethod]
+    [DataRow(8000, 2, 3L)]
+    [DataRow(16000, 1, 4L)]
+    [DataRow(16000, 2, 4L)]
+    [DataRow(16000, 2, 0L)]
+    public void Effective_source_format_mismatch_fails_before_pcm_copy(int rate, int channels, long mask)
+    {
+        FakeNative native = new() { ReportedInputFormat = new(rate, channels, (ulong)mask) };
+        native.OnSubmit = _ => native.AddPcm(4);
+        using FfmpegAacDecoder decoder = new(native, Pcm, 16000, new NativeDecode.InputFormat(16000, 2, 3));
+        Assert.ThrowsExactly<NotSupportedException>(() => decoder.DecodeWave(Input(0, 4)).ToArray());
+        Assert.AreEqual(0, native.PcmCopies);
+        Assert.AreEqual(1, native.Disposals);
+        Assert.ThrowsExactly<ObjectDisposedException>(() => decoder.DecodeFlush().ToArray());
+    }
+
+    [TestMethod]
+    public void Effective_source_format_is_distinct_from_explicit_resampled_output()
+    {
+        FakeNative native = new() { ReportedInputFormat = new(48000, 2, 3) };
+        native.OnSubmit = _ => native.AddPcm(4);
+        using FfmpegAacDecoder decoder = new(native, Pcm, 48000, new NativeDecode.InputFormat(48000, 2, 3));
+        Assert.HasCount(1, decoder.DecodeWave(Input(0, 12)).ToArray());
+        Assert.HasCount(1, decoder.DecodeWave(Input(12, 12)).ToArray());
+        Assert.AreEqual(16000, decoder.WaveFormat.SampleRate);
+        Assert.AreEqual(1, native.InputFormatReads);
+        Assert.AreEqual(2, native.PcmCopies);
+    }
+
+    [TestMethod]
+    public void Missing_effective_format_contract_fails_and_closes_before_pcm_copy()
+    {
+        FakeNative native = new() { MissingFormatApi = true };
+        native.OnSubmit = _ => native.AddPcm(4);
+        using FfmpegAacDecoder decoder = new(native, Pcm, 16000, new NativeDecode.InputFormat(16000, 2, 3));
+        Assert.ThrowsExactly<PlatformNotSupportedException>(() => decoder.DecodeWave(Input(0, 4)).ToArray());
+        Assert.AreEqual(0, native.PcmCopies);
+        Assert.AreEqual(1, native.Disposals);
+    }
+
     private static FrameEntry Input(long start, uint count, byte value = 1) => new()
     {
         Chunk = new ChunkEntry { TrackId = 1, ChunkIndex = 0, ChunkOffset = 0, FirstSample = start,
@@ -313,7 +353,15 @@ public class DecoderDrainTests
         private readonly Queue<(int status, int count, byte value)> outputs = new();
         public Action<int>? OnSubmit;
         public Action? OnFinish;
-        public int FinishCalls, ReceiveCalls, Disposals;
+        public int FinishCalls, ReceiveCalls, Disposals, PcmCopies, InputFormatReads;
+        public InputFormat ReportedInputFormat = new(16000, 2, 3);
+        public bool MissingFormatApi;
+        public override InputFormat GetInputFormat()
+        {
+            InputFormatReads++;
+            if (MissingFormatApi) throw new PlatformNotSupportedException("missing input format API");
+            return ReportedInputFormat;
+        }
         public int BytesPerSample = 4;
         public bool EndlessEmpty;
         public void AddPcm(int count, byte value = 1) => outputs.Enqueue((PcmReady, count, value));
@@ -337,6 +385,7 @@ public class DecoderDrainTests
             samples = output.count;
             if (output.status != PcmReady) { outputs.Dequeue(); return output.status; }
             if (first.IsEmpty) return PcmReady;
+            PcmCopies++;
             Assert.IsGreaterThanOrEqualTo(samples, capacity);
             first[..(samples * BytesPerSample)].Fill(output.value);
             if (!second.IsEmpty) second[..(samples * BytesPerSample)].Fill((byte)(output.value + 1));

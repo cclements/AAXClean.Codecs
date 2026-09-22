@@ -15,6 +15,8 @@ internal sealed class FfmpegAacDecoder : IDisposable
 	public WaveFormat WaveFormat { get; }
 	private readonly NativeDecode AudioDecoder;
 	private readonly uint InputTimescale;
+	private readonly NativeDecode.InputFormat? ExpectedAacFormat;
+	private bool InputFormatVerified;
 	private readonly Queue<FrameEntry> PendingMetadata = new();
 	private FrameEntry? CurrentSource;
 	private long? NextOutputStartSample;
@@ -33,6 +35,7 @@ internal sealed class FfmpegAacDecoder : IDisposable
 	{
 		ArgumentOutOfRangeException.ThrowIfZero(inputTimescale);
 		InputTimescale = inputTimescale;
+		ExpectedAacFormat = GetExpectedAacFormat(audioSampleEntry);
 		NativeDecode.EnsureDrainApi();
 		if (audioSampleEntry.Esds is EsdsBox esds)
 		{
@@ -59,6 +62,7 @@ internal sealed class FfmpegAacDecoder : IDisposable
 	{
 		ArgumentOutOfRangeException.ThrowIfZero(inputTimescale);
 		InputTimescale = inputTimescale;
+		ExpectedAacFormat = GetExpectedAacFormat(audioSampleEntry);
 		NativeDecode.EnsureDrainApi();
 		WaveFormat = new WaveFormat(sampleRate, waveFormatEncoding, stereo);
 		if (audioSampleEntry.Esds is EsdsBox esds)
@@ -78,7 +82,8 @@ internal sealed class FfmpegAacDecoder : IDisposable
 
 	// Narrow transport seam for protocol/lifecycle tests; production constructors
 	// above require the matched native protocol before opening resources.
-	internal FfmpegAacDecoder(NativeDecode decoder, WaveFormat format, uint inputTimescale)
+	internal FfmpegAacDecoder(NativeDecode decoder, WaveFormat format, uint inputTimescale,
+		NativeDecode.InputFormat? expectedAacFormat = null)
 	{
 		ArgumentNullException.ThrowIfNull(decoder);
 		ArgumentNullException.ThrowIfNull(format);
@@ -86,6 +91,29 @@ internal sealed class FfmpegAacDecoder : IDisposable
 		AudioDecoder = decoder;
 		WaveFormat = format;
 		InputTimescale = inputTimescale;
+		ExpectedAacFormat = expectedAacFormat;
+	}
+
+	private static NativeDecode.InputFormat? GetExpectedAacFormat(AudioSampleEntry entry)
+	{
+		ArgumentNullException.ThrowIfNull(entry);
+		if (entry.Esds is not EsdsBox esds) return null;
+		var asc = esds.ES_Descriptor.DecoderConfig.AudioSpecificConfig;
+		if (asc.ChannelConfiguration is not 1 and not 2)
+			throw new NotSupportedException("AAC PCM conversion requires an explicit mono or stereo source layout; program-config elements and multichannel AAC are not admitted.");
+		return new(asc.SamplingFrequency, asc.ChannelConfiguration, asc.ChannelConfiguration == 1 ? 4UL : 3UL);
+	}
+
+	private void VerifyDecodedInputFormat()
+	{
+		if (InputFormatVerified || ExpectedAacFormat is not { } expected) return;
+		var actual = AudioDecoder.GetInputFormat();
+		if (actual != expected)
+			throw new NotSupportedException(
+				$"Decoded AAC format ({actual.SampleRate} Hz, {actual.Channels} channels, layout 0x{actual.ChannelMask:X}) "
+				+ $"does not match its declared source format ({expected.SampleRate} Hz, {expected.Channels} channels). "
+				+ "Effective AAC rate/layout negotiation is required before this source can be converted safely.");
+		InputFormatVerified = true;
 	}
 
 	private static int GetMaxNumberOfSamplesToSkip(EsdsBox esds)
@@ -227,6 +255,10 @@ internal sealed class FfmpegAacDecoder : IDisposable
 					yield break;
 				throw ProtocolError("querying decoded PCM", state);
 			}
+			// The native query stages a real source frame without converting/copying
+			// PCM. Check that its effective rate/layout matches the declared source
+			// before using a timeline or output format derived from that declaration.
+			VerifyDecodedInputFormat();
 			Memory<byte> decoded = new byte[checked(required * WaveFormat.BlockAlign)];
 			bool planar = WaveFormat.Encoding is NAudio.Wave.WaveFormatEncoding.Dts && WaveFormat.Channels == 2;
 			int planeLength = planar ? decoded.Length / 2 : decoded.Length;

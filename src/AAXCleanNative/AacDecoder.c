@@ -1,4 +1,19 @@
 #include "AAXCleanNative.h"
+
+int32_t Decoder_GetInputFormat(PAacDecoder config, int32_t* sample_rate, int32_t* channels, uint64_t* channel_mask) {
+    if (!config || !config->context)
+        return ERR_INVALID_HANDLE;
+    if (!sample_rate || !channels || !channel_mask)
+        return ERR_BUFF_HANDLE_INVALID;
+    if (config->terminal_error)
+        return config->terminal_error;
+    if (!config->input_sample_rate)
+        return DECODER_NEED_INPUT;
+    *sample_rate = config->input_sample_rate;
+    *channels = config->input_layout.nb_channels;
+    *channel_mask = config->input_layout.order == AV_CHANNEL_ORDER_NATIVE ? config->input_layout.u.mask : 0;
+    return ERR_SUCCESS;
+}
 #include <limits.h>
 
 static int32_t init_swr(PAacDecoder pdec, POutputOptions pOptions, AVChannelLayout* pIn_layout, int32_t in_sample_rate, int32_t in_sample_fmt) {

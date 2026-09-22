@@ -123,6 +123,11 @@ EXPORT int32_t AacEncoder_GetExtraData(PAacEncoder config, uint8_t* ascBuffer, i
  * Both output pointers are required; errors leave both outputs unchanged. */
 EXPORT int32_t AacEncoder_GetTiming(PAacEncoder config, int32_t* frame_size, int32_t* initial_padding);
 
+/** Inspect the actual decoded source format after the first PCM query stages a
+ * frame. Returns DECODER_NEED_INPUT before that point; outputs stay untouched on
+ * failure. channel_mask is zero for a non-native/unspecified channel layout. */
+EXPORT int32_t Decoder_GetInputFormat(PAacDecoder config, int32_t* sample_rate, int32_t* channels, uint64_t* channel_mask);
+
 
 EXPORT int32_t AacEncoder_Close(PAacEncoder config);
 

@@ -7,7 +7,7 @@ using Mpeg4Lib.Chunks;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 
-if (args.Length != 4) throw new ArgumentException("usage: <library> <fixtures> <output> <v2|reject-v1>");
+if (args.Length != 4) throw new ArgumentException("usage: <library> <fixtures> <output> <v2|reject-v1|reject-input-format|reject-format-change>");
 IntPtr native = NativeLibrary.Load(Path.GetFullPath(args[0]));
 NativeLibrary.SetDllImportResolver(typeof(FfmpegAacDecoder).Assembly,
     (name, _, _) => name == "aaxcleannative" ? native : IntPtr.Zero);
@@ -19,6 +19,21 @@ if (args[3] == "reject-v1")
     catch (PlatformNotSupportedException e) when (e.Message.Contains("API v2")) { rejected = true; }
     if (!rejected) throw new InvalidOperationException("old native payload was not rejected before conversion");
     Console.WriteLine("PASS old native payload rejected before conversion");
+    return;
+}
+if (args[3] == "reject-input-format")
+{
+    using var decoder = MakeDecoder("aac");
+    bool rejected = false;
+    int delivered = 0;
+    try
+    {
+        foreach (var packet in ReadPackets("aac")) delivered += decoder.DecodeWave(packet).Count();
+        delivered += decoder.DecodeFlush().Count();
+    }
+    catch (PlatformNotSupportedException e) when (e.Message.Contains("Decoder_GetInputFormat")) { rejected = true; }
+    if (!rejected || delivered != 0) throw new InvalidOperationException("unpaired native payload delivered PCM without the input format contract");
+    Console.WriteLine("PASS missing input format export rejected before delivering PCM");
     return;
 }
 if (args[3] == "reject-format-change")

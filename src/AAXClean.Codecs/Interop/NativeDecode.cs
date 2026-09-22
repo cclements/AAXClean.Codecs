@@ -1,5 +1,6 @@
 ﻿using AAXClean.Codecs.FrameFilters.Audio;
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace AAXClean.Codecs.Interop;
@@ -27,6 +28,23 @@ internal unsafe abstract class NativeDecode : IDisposable
 	private static extern int Decoder_SubmitPacket(DecoderHandle self, byte* data, int size);
 	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
 	private static extern int Decoder_ReceivePcm(DecoderHandle self, byte* output0, byte* output1, int capacity, out int samples);
+	[DllImport(libname, CallingConvention = CallingConvention.StdCall)]
+	private static extern int Decoder_GetInputFormat(DecoderHandle self, out int sampleRate, out int channels, out ulong channelMask);
+
+	internal readonly record struct InputFormat(int SampleRate, int Channels, ulong ChannelMask);
+	public virtual InputFormat GetInputFormat()
+	{
+		try
+		{
+			if (Decoder_GetInputFormat(Handle, out int rate, out int channels, out ulong mask) != 0)
+				throw new InvalidDataException("Native decoder has not reported a decoded input format.");
+			return new(rate, channels, mask);
+		}
+		catch (EntryPointNotFoundException error)
+		{
+			throw new PlatformNotSupportedException("AAC PCM conversion requires a matched native payload with Decoder_GetInputFormat.", error);
+		}
+	}
 
 	internal static void EnsureDrainApi()
 	{

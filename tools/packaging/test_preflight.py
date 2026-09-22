@@ -57,7 +57,7 @@ class AdmissionTests(unittest.TestCase):
                    'managed': {f['target']: f['sha256'] for f in self.m['files'] if f['target'].endswith('.dll') and '/native/' not in f['target']},
                    'parser_sha256': self.m['parser']['sha256'], 'api_version': 2,
                    'exports': sorted(gate.EXPORTS), 'execution_host_rid': rid,
-                   'drain_pass': True, 'error_pass': True, 'encoder_timing_pass': True, 'source': 'fixture source hash',
+                   'drain_pass': True, 'error_pass': True, 'encoder_timing_pass': True, 'input_format_pass': True, 'source': 'fixture source hash',
                    'dependencies': 'fixture dependency hashes', 'configuration': 'fixture flags',
                    'toolchain': 'fixture toolchain', 'execution_log': self.log,
                    'distribution': 'approved', 'distribution_record': self.log}
@@ -101,6 +101,14 @@ class AdmissionTests(unittest.TestCase):
     def test_missing_encoder_timing_execution(self):
         self.change_receipt(encoder_timing_pass=False)
         self.rejects('encoder timing execution')
+
+    def test_missing_decoded_input_format_export(self):
+        self.change_receipt(exports=sorted(gate.EXPORTS - {'Decoder_GetInputFormat'}))
+        self.rejects('missing v2 exports/version')
+
+    def test_missing_decoded_input_format_execution(self):
+        self.change_receipt(input_format_pass=False)
+        self.rejects('decoded input-format execution')
 
     def test_missing_rid(self):
         self.m['files'].pop()

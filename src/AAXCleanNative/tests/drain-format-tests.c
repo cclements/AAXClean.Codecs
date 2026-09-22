@@ -29,7 +29,12 @@ int main(void) {
         PAacDecoder decoder = Decoder_OpenEC3(&output);
         assert((intptr_t)decoder > 0);
         int count;
+        int32_t input_rate = 123, input_channels = 456; uint64_t mask = 789;
+        assert(Decoder_GetInputFormat(decoder, &input_rate, &input_channels, &mask) == DECODER_NEED_INPUT);
+        assert(input_rate == 123 && input_channels == 456 && mask == 789);
         assert(Decoder_ReceivePcm(decoder, NULL, NULL, 0, &count) == DECODER_PCM_READY);
+        assert(Decoder_GetInputFormat(decoder, &input_rate, &input_channels, &mask) == 0);
+        assert(input_rate == 48000 && input_channels == 2 && mask == AV_CH_LAYOUT_STEREO);
         uint8_t *pcm = calloc(count, 4);
         assert(pcm);
         assert(Decoder_ReceivePcm(decoder, pcm, NULL, count, &count) == DECODER_PCM_CONSUMED);
@@ -44,6 +49,7 @@ int main(void) {
         if (change == 2) channels = 1;
         assert(Decoder_ReceivePcm(decoder, NULL, NULL, 0, &count) == ERR_DECODER_INPUT_FORMAT_CHANGED);
         assert(count == 0);
+        assert(Decoder_GetInputFormat(decoder, &input_rate, &input_channels, &mask) == ERR_DECODER_INPUT_FORMAT_CHANGED);
         int before = receives;
         assert(Decoder_ReceivePcm(decoder, NULL, NULL, 0, &count) == ERR_DECODER_INPUT_FORMAT_CHANGED);
         assert(receives == before);

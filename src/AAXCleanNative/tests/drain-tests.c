@@ -17,6 +17,9 @@ static int32_t (*receive_pcm)(PAacDecoder, uint8_t*, uint8_t*, int32_t, int32_t*
 static int32_t (*legacy_submit)(PAacDecoder, uint8_t*, uint32_t);
 static int32_t (*legacy_receive)(PAacDecoder, uint8_t*, uint8_t*, int32_t);
 static int32_t (*legacy_flush)(PAacDecoder, uint8_t*, uint8_t*, uint32_t);
+static int32_t (*input_format)(PAacDecoder, int32_t*, int32_t*, uint64_t*);
+static int32_t expected_rate, observed_rate, observed_channels;
+static uint64_t observed_mask;
 static long total_samples, pcm_frames;
 static int receive_first, final_state, expect_format_change;
 
@@ -41,6 +44,8 @@ static int receive_available(PAacDecoder decoder, FILE* output) {
         if (state == DECODER_PCM_CONSUMED) { assert(needed == 0); continue; }
         checked_receive(decoder, state);
         assert(state == DECODER_PCM_READY && needed > 0);
+        assert(input_format(decoder, &observed_rate, &observed_channels, &observed_mask) == 0);
+        assert(observed_rate == expected_rate && observed_channels == 2 && observed_mask == AV_CH_LAYOUT_STEREO);
         int32_t again = -1;
         assert(receive_pcm(decoder, NULL, NULL, 0, &again) == state && again == needed);
         uint8_t* bytes = calloc((size_t)needed, 4);
@@ -79,11 +84,13 @@ int main(int argc, char** argv) {
         LOAD(legacy_receive, "Decoder_ReceiveDecodedFrame");
         LOAD(legacy_flush, "Decoder_DecodeFlush");
     } else {
+        LOAD(input_format, "Decoder_GetInputFormat");
         LOAD(submit, "Decoder_SubmitPacket"); LOAD(receive_pcm, "Decoder_ReceivePcm");
         int (*version)(void); LOAD(version, "Decoder_GetApiVersion"); assert(version() == 2);
     }
     char path[4096];
     const int aac = strcmp(argv[3], "aac") == 0;
+    expected_rate = aac ? 44100 : 48000;
     OutputOptions format = { aac ? 16000 : 32000, AV_SAMPLE_FMT_S16, 2 };
     PAacDecoder decoder;
     uint8_t asc[2];
@@ -95,6 +102,15 @@ int main(int argc, char** argv) {
         decoder = open_aac(&options);
     } else decoder = open_ec3(&format);
     assert((intptr_t)decoder > 0);
+    if (!legacy) {
+        int32_t rate = 123, channels = 456; uint64_t mask = 789;
+        assert(input_format(NULL, &rate, &channels, &mask) == ERR_INVALID_HANDLE);
+        assert(input_format(decoder, NULL, &channels, &mask) == ERR_BUFF_HANDLE_INVALID);
+        assert(input_format(decoder, &rate, NULL, &mask) == ERR_BUFF_HANDLE_INVALID);
+        assert(input_format(decoder, &rate, &channels, NULL) == ERR_BUFF_HANDLE_INVALID);
+        assert(input_format(decoder, &rate, &channels, &mask) == DECODER_NEED_INPUT);
+        assert(rate == 123 && channels == 456 && mask == 789);
+    }
     snprintf(path, sizeof(path), "%s/%s.packets", argv[2], argv[3]);
     FILE* input = fopen(path, "rb"); assert(input);
     FILE* output = fopen(argv[4], "wb"); assert(output);
@@ -148,8 +164,8 @@ int main(int argc, char** argv) {
     }
     assert(!expect_format_change && "format change incorrectly reported successful EOF");
     fclose(output); assert(close_decoder(decoder) == 0);
-    printf("{\"codec\":\"%s\",\"legacy\":%s,\"packets\":%d,\"samplesPerChannel\":%ld,\"pcmFrames\":%ld,\"receiveFirst\":%d,\"finalState\":%d}\n",
-        argv[3], legacy ? "true" : "false", packets, total_samples, pcm_frames, receive_first, final_state);
+    printf("{\"codec\":\"%s\",\"legacy\":%s,\"packets\":%d,\"samplesPerChannel\":%ld,\"pcmFrames\":%ld,\"receiveFirst\":%d,\"finalState\":%d,\"inputSampleRate\":%d,\"inputChannels\":%d,\"inputChannelMask\":%llu}\n",
+        argv[3], legacy ? "true" : "false", packets, total_samples, pcm_frames, receive_first, final_state, observed_rate, observed_channels, (unsigned long long)observed_mask);
 #ifdef _WIN32
     FreeLibrary(lib);
 #else

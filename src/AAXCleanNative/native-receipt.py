@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 RIDS = {'osx-arm64', 'osx-x64', 'linux-arm64', 'linux-x64', 'win-arm64', 'win-x64'}
-EXPORTS = ('Decoder_GetApiVersion', 'Decoder_SubmitPacket', 'Decoder_ReceivePcm', 'AacEncoder_GetTiming')
+EXPORTS = ('Decoder_GetApiVersion', 'Decoder_SubmitPacket', 'Decoder_ReceivePcm', 'AacEncoder_GetTiming', 'Decoder_GetInputFormat')
 
 
 def require(condition, message):
@@ -124,6 +124,9 @@ def verify(source, build, rid, fixtures):
         require(result['samplesPerChannel'] == count and result['receiveFirst'] > 0,
                 f'{codec} incorrect drain/EAGAIN result')
         require((build / f'verify-{codec}.s16').stat().st_size == count * 4, 'PCM byte count mismatch')
+        require(result['inputSampleRate'] == (44100 if codec == 'aac' else 48000) and
+                result['inputChannels'] == 2 and result['inputChannelMask'] == 3,
+                f'{codec} incorrect decoded input format')
         results[codec] = result
     text = run('rate-change', [runner, native, fixtures, 'eac3-rate-change', build / 'verify-rejected.s16', 'reject-change'])
     require('PASS: real coded format change rejected terminally' in text, 'missing coded format-change witness')
@@ -139,12 +142,12 @@ def verify(source, build, rid, fixtures):
              'exports': list(EXPORTS), 'native_sha256': digest(native),
              'build_receipt_sha256': digest(build / 'build-receipt.json'),
              'fixture_manifest_sha256': digest(fixtures / 'manifest.json'),
-             'drain_pass': True, 'error_pass': True, 'encoder_timing_pass': True, 'results': results, 'execution_logs': logs,
+             'drain_pass': True, 'error_pass': True, 'encoder_timing_pass': True, 'input_format_pass': True, 'results': results, 'execution_logs': logs,
              'distribution': 'NONFREE/UNREDISTRIBUTABLE',
              'package_admission': 'NOT ADMITTED: no managed/parser package-pair execution receipt',
              'limits': 'AAC-LC and E-AC-3 synthetic counts; no real AC-4/HE-AAC/xHE-AAC, alignment, managed runtime or distribution proof'}
     write_json(output, value)
-    print(f'{rid}: three native drain cases, two terminal-error suites and encoder timing passed')
+    print(f'{rid}: three native drain/input-format cases, two terminal-error suites and encoder timing passed')
 
 
 def main():
