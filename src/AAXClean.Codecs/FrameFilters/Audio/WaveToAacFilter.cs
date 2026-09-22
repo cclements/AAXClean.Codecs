@@ -20,8 +20,23 @@ namespace AAXClean.Codecs.FrameFilters.Audio
 		{
 			ChapterQueue = chapterQueue;
 			aacEncoder = new FfmpegAacEncoder(waveFormat, bitrate, quality);
-			var asc = aacEncoder.GetAudioSpecificConfig();
-			Mp4aWriter = new Mp4aWriter(mp4Output, mp4File.Ftyp, mp4File.Moov, asc);
+			try
+			{
+				var asc = aacEncoder.GetAudioSpecificConfig();
+				Mp4aWriter = new Mp4aWriter(mp4Output, mp4File.Ftyp, mp4File.Moov, asc);
+			}
+			catch
+			{
+				// A failed constructor never returns a filter for the caller to dispose.
+				aacEncoder.Dispose();
+				throw;
+			}
+		}
+
+		protected override async Task CompleteInternalAsync()
+		{
+			try { await base.CompleteInternalAsync(); }
+			finally { aacEncoder.Dispose(); }
 		}
 
 		protected override Task PerformFilteringAsync(WaveEntry input)

@@ -2,6 +2,7 @@
 using Mpeg4Lib;
 using Mpeg4Lib.Boxes;
 using System;
+using System.Threading.Tasks;
 
 namespace AAXClean.Codecs.FrameFilters.Audio
 {
@@ -42,17 +43,32 @@ namespace AAXClean.Codecs.FrameFilters.Audio
 		{
 			if (!currentWriterOpen || aacEncoder is null) return;
 
-			foreach (var flushedFrame in aacEncoder.EncodeFlush())
+			// Detach before flushing so failure cannot retain or re-flush this encoder.
+			using var encoder = aacEncoder;
+			aacEncoder = null;
+			currentWriterOpen = false;
+			foreach (var flushedFrame in encoder.EncodeFlush())
 			{
 				// A short chapter can buffer all of its packets until flush.
 				mp4writer?.AddFrame(flushedFrame.FrameData.Span, framesInCurrentChunk++ == 0, flushedFrame.SamplesInFrame);
 				framesInCurrentChunk %= FRAMES_PER_CHUNK;
 			}
-			mp4writer?.SetEditList(aacEncoder.PresentationStartSamples, aacEncoder.AcceptedPcmSamples);
+			mp4writer?.SetEditList(encoder.PresentationStartSamples, encoder.AcceptedPcmSamples);
 			mp4writer?.Close();
 			mp4writer?.OutputFile.Close();
 			mp4writer?.Dispose();
-			currentWriterOpen = false;
+		}
+
+		protected override async Task CompleteInternalAsync()
+		{
+			try { await base.CompleteInternalAsync(); }
+			finally
+			{
+				// Construction, encode and output failures may precede CloseCurrentWriter.
+				aacEncoder?.Dispose();
+				aacEncoder = null;
+				currentWriterOpen = false;
+			}
 		}
 
 		protected override void WriteFrameToFile(WaveEntry audioFrame, bool _)
